@@ -16,6 +16,7 @@ class SessionCreateRequest(BaseModel):
 class SessionCreateResponse(BaseModel):
     sid: int
     question: QuestionResponse
+    transition_audio_urls: list[str] = Field(default_factory=list)
 
 
 class TextAnswerRequest(BaseModel):
@@ -34,16 +35,19 @@ class TextAnswerRequest(BaseModel):
 class FollowupAnswerResponse(BaseModel):
     type: Literal["followup"] = "followup"
     question: QuestionResponse
+    transition_audio_url: str | None = None
 
 
 class NextAnswerResponse(BaseModel):
     type: Literal["next"] = "next"
     question: QuestionResponse
+    transition_audio_url: str | None = None
 
 
 class DoneAnswerResponse(BaseModel):
     type: Literal["done"] = "done"
     report_id: int
+    transition_audio_url: str | None = None
 
 
 AnswerResponse = Annotated[
