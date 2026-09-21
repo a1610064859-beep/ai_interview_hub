@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -53,10 +54,9 @@ class FakeClient:
                 return FakeResp()
 
 
-# A. JSON -> Pydantic 转换测试
-def test_json_to_pydantic(monkeypatch, tmp_path):
-    log_file = tmp_path / "usage.jsonl"
-    settings = make_settings(llm_usage_log_path=str(log_file))
+# A. JSON -> Pydantic 转换测试（非流式模式下 ttft_ms 为 None）
+def test_json_to_pydantic(monkeypatch):
+    settings = make_settings()
     client = LLMClient(settings)
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FakeClient())
 
@@ -70,14 +70,13 @@ def test_json_to_pydantic(monkeypatch, tmp_path):
     assert rec["success"] is True
     assert rec["error"] is None
     assert rec["total_tokens"] == 12
-    assert isinstance(rec["ttft_ms"], (int, float))
-    assert rec["ttft_ms"] >= 0
+    # 非流式模式无法测量真实首字时延，按规约为 None (JSON null)
+    assert rec["ttft_ms"] is None
 
 
 # B. ValidationError retry 一次测试（第1次校验失败重试，第2次成功）
-def test_validation_error_retry_once(monkeypatch, tmp_path):
+def test_validation_error_retry_once(monkeypatch):
     calls = []
-    log_file = tmp_path / "usage.jsonl"
 
     class BadThenGood:
         def __init__(self, **kwargs):
@@ -94,7 +93,7 @@ def test_validation_error_retry_once(monkeypatch, tmp_path):
                     return FakeResp('{"value": "retry_ok"}', tokens=8)
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: BadThenGood(**x))
-    client = LLMClient(make_settings(llm_usage_log_path=str(log_file)))
+    client = LLMClient(make_settings())
 
     result = asyncio.run(client.chat_json("orchestration", [], Out))
     assert result.value == "retry_ok"
@@ -105,15 +104,16 @@ def test_validation_error_retry_once(monkeypatch, tmp_path):
     assert client.records[0]["success"] is False
     assert client.records[0]["error"] == "validation_error"
     assert client.records[0]["total_tokens"] == 5
+    assert client.records[0]["ttft_ms"] is None
     assert client.records[1]["success"] is True
     assert client.records[1]["error"] is None
     assert client.records[1]["total_tokens"] == 8
+    assert client.records[1]["ttft_ms"] is None
 
 
 # C1. Fallback 成功：编排模式 local 失败重试1次后仍失败，fallback flash 成功
-def test_fallback_orchestration_local_to_flash(monkeypatch, tmp_path):
+def test_fallback_orchestration_local_to_flash(monkeypatch):
     calls = []
-    log_file = tmp_path / "usage.jsonl"
 
     class LocalFailFlashSuccess:
         def __init__(self, **kwargs):
@@ -132,7 +132,7 @@ def test_fallback_orchestration_local_to_flash(monkeypatch, tmp_path):
                     return FakeResp('{"value": "flash_ok"}', tokens=15)
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: LocalFailFlashSuccess(**x))
-    client = LLMClient(make_settings(llm_usage_log_path=str(log_file)))
+    client = LLMClient(make_settings())
 
     result = asyncio.run(client.chat_json("orchestration", [], Out))
     assert result.value == "flash_ok"
@@ -145,9 +145,8 @@ def test_fallback_orchestration_local_to_flash(monkeypatch, tmp_path):
 
 
 # C2. Fallback 成功：评分模式 flagship 优先，flagship 失败，local 接管成功
-def test_scoring_flagship_first_and_local_fallback(monkeypatch, tmp_path):
+def test_scoring_flagship_first_and_local_fallback(monkeypatch):
     calls = []
-    log_file = tmp_path / "usage.jsonl"
 
     class FlagshipFailLocalSuccess:
         def __init__(self, **kwargs):
@@ -164,7 +163,7 @@ def test_scoring_flagship_first_and_local_fallback(monkeypatch, tmp_path):
                     return FakeResp('{"value": "local_fallback_ok"}', tokens=20)
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FlagshipFailLocalSuccess(**x))
-    client = LLMClient(make_settings(llm_usage_log_path=str(log_file)))
+    client = LLMClient(make_settings())
 
     result = asyncio.run(client.chat_json("scoring", [], Out))
     assert result.value == "local_fallback_ok"
@@ -223,10 +222,25 @@ def test_all_failed_raises_llmerror(monkeypatch):
         asyncio.run(client.chat_json("orchestration", [], Out))
 
 
-# F & G. usage 字段存在与持久化日志测试（包含 total_tokens、ttft_ms，记录失败与无敏感字段）
-def test_usage_logging_fields_and_persistence(monkeypatch, tmp_path):
-    log_file = tmp_path / "usage_test.jsonl"
-    settings = make_settings(llm_usage_log_path=str(log_file))
+# F & G. 内存捕获验证写入成功路径（替换读取日志文件验证，检查字段完整性与无敏感信息）
+def test_usage_logging_fields_and_persistence_memory_success(monkeypatch):
+    written_lines = []
+
+    class MockFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def write(self, text):
+            written_lines.append(text)
+
+    def fake_open(self, mode="r", encoding=None):
+        return MockFile()
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    settings = make_settings(llm_usage_log_path="logs/usage_test.jsonl")
 
     class MixedOutcome:
         def __init__(self, **kwargs):
@@ -247,11 +261,10 @@ def test_usage_logging_fields_and_persistence(monkeypatch, tmp_path):
     result = asyncio.run(client.chat_json("orchestration", [], Out))
     assert result.value == "ok"
 
-    # 检查 in-memory records
+    # 1. 验证 in-memory records
     assert len(client.records) == 2
     fail_rec, succ_rec = client.records[0], client.records[1]
 
-    # 验证关键字段均存在
     for r in [fail_rec, succ_rec]:
         assert "stage" in r
         assert "model" in r
@@ -259,24 +272,63 @@ def test_usage_logging_fields_and_persistence(monkeypatch, tmp_path):
         assert "ttft_ms" in r
         assert "total_tokens" in r
         assert "error" in r
-        # 严禁记录 API Key 和完整回答（契约安全规范）
         assert "api_key" not in r
         assert "content" not in r
         assert "messages" not in r
 
     assert fail_rec["success"] is False
     assert fail_rec["error"] == "TimeoutError"
+    assert fail_rec["ttft_ms"] is None
     assert succ_rec["success"] is True
     assert succ_rec["total_tokens"] == 42
-    assert succ_rec["ttft_ms"] >= 0
+    assert succ_rec["ttft_ms"] is None
 
-    # 验证日志文件已落盘
-    assert log_file.exists()
-    lines = log_file.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 2
-    loaded = [json.loads(line) for line in lines]
+    # 2. 内存捕获验证写入内容（无磁盘读取）
+    assert len(written_lines) == 2
+    loaded = [json.loads(line) for line in written_lines]
     assert loaded[0]["model"] == "local_m" and loaded[0]["success"] is False
+    assert loaded[0]["ttft_ms"] is None
     assert loaded[1]["model"] == "flash_m" and loaded[1]["success"] is True
+    assert loaded[1]["ttft_ms"] is None
+    assert loaded[1]["total_tokens"] == 42
+    for item in loaded:
+        assert "api_key" not in item
+        assert "content" not in item
+        assert "messages" not in item
+
+
+# G2. 内存捕获验证写入失败路径（可观察告警，不含敏感信息，业务不中断且内存记账完整）
+def test_usage_logging_write_failure_warning(monkeypatch, caplog):
+    def fake_open_fail(self, mode="r", encoding=None):
+        raise OSError("Simulated disk error on logs/usage_fail.jsonl")
+
+    monkeypatch.setattr(Path, "open", fake_open_fail)
+    settings = make_settings(llm_usage_log_path="logs/usage_fail.jsonl")
+    client = LLMClient(settings)
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FakeClient())
+
+    with caplog.at_level(logging.WARNING):
+        result = asyncio.run(client.chat_json("orchestration", [{"role": "user", "content": "x"}], Out))
+
+    # 业务正常完成，不抛出异常
+    assert result.value == "ok"
+
+    # 内存捕获验证告警已记录
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    warn_text = caplog.text
+    assert "Failed to write LLM usage log to logs/usage_fail.jsonl" in warn_text
+    assert "OSError" in warn_text
+    # 验证告警绝不泄露敏感信息
+    assert "api_key" not in warn_text.lower()
+    assert "ollama" not in warn_text
+    assert "flash_key" not in warn_text
+    assert "flagship_key" not in warn_text
+
+    # 内存记账依然完整
+    assert len(client.records) == 1
+    assert client.records[0]["success"] is True
+    assert client.records[0]["ttft_ms"] is None
 
 
 # Astra 审查项 1: Settings Pydantic alias 映射验证
@@ -300,8 +352,7 @@ def test_settings_reads_llm_env_aliases(monkeypatch):
 
 
 # Astra 审查项 4: 配置缺失时不产生重复日志
-def test_missing_config_no_duplicate_records(tmp_path):
-    log_file = tmp_path / "missing_cfg.jsonl"
+def test_missing_config_no_duplicate_records():
     settings = SimpleNamespace(
         local_model=None,
         local_base_url=None,
@@ -310,7 +361,7 @@ def test_missing_config_no_duplicate_records(tmp_path):
         flash_base_url=None,
         flash_api_key=None,
         llm_orchestration_timeout_s=6.0,
-        llm_usage_log_path=str(log_file),
+        llm_usage_log_path="logs/missing_cfg.jsonl",
     )
     client = LLMClient(settings)
 
@@ -320,6 +371,7 @@ def test_missing_config_no_duplicate_records(tmp_path):
     # local 和 flash 各产生 1 条 missing_config 记录，绝不重复
     assert len(client.records) == 2
     assert [r["error"] for r in client.records] == ["missing_config", "missing_config"]
+    assert all(r["ttft_ms"] is None for r in client.records)
 
 
 # 数据库与模型可空性测试

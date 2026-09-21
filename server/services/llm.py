@@ -1,9 +1,11 @@
 import json
-import time
+import logging
 from pathlib import Path
 from typing import Type, TypeVar
 from pydantic import BaseModel, ValidationError
 from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -24,8 +26,12 @@ class LLMClient:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Failed to write LLM usage log to %s: %s",
+                    log_path,
+                    type(e).__name__,
+                )
 
     def _chain(self, stage: str):
         if stage in {"orchestration", "followup", "new_student", "counsel"}:
@@ -63,14 +69,12 @@ class LLMClient:
 
                 try:
                     client = AsyncOpenAI(base_url=url, api_key=key)
-                    start_time = time.perf_counter()
                     resp = await client.chat.completions.create(
                         model=model,
                         messages=messages,
                         response_format={"type": "json_object"},
                         timeout=self._timeout(stage),
                     )
-                    record["ttft_ms"] = round((time.perf_counter() - start_time) * 1000, 2)
                     usage = getattr(resp, "usage", None)
                     record["total_tokens"] = getattr(usage, "total_tokens", None)
                     data = resp.choices[0].message.content
