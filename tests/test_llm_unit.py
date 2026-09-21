@@ -1,115 +1,344 @@
-import pytest
 import asyncio
+import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 from pydantic import BaseModel
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from server.config import Settings
 from server.services.llm import LLMClient, LLMError
+
 
 class Out(BaseModel):
     value: str
 
-def make_settings():
-    return SimpleNamespace(local_model='m',local_base_url='u',local_api_key='k',flash_model='fm',flash_base_url='fu',flash_api_key='fk',flagship_model='sm',flagship_base_url='su',flagship_api_key='sk',orchestration_timeout_s=6)
+
+def make_settings(**kwargs):
+    defaults = {
+        "local_model": "local_m",
+        "local_base_url": "http://local:11434/v1",
+        "local_api_key": "ollama",
+        "flash_model": "flash_m",
+        "flash_base_url": "https://dashscope.example.com/v1",
+        "flash_api_key": "flash_key",
+        "flagship_model": "flagship_m",
+        "flagship_base_url": "https://dashscope.example.com/v1",
+        "flagship_api_key": "flagship_key",
+        "llm_orchestration_timeout_s": 6.0,
+        "llm_scoring_timeout_s": 60.0,
+        "llm_usage_log_path": "logs/test_llm_usage.jsonl",
+    }
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
 
 class FakeResp:
-    def __init__(self, text='{\"value\":\"ok\"}', tokens=12):
-        self.choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
-        self.usage=SimpleNamespace(total_tokens=tokens)
+    def __init__(self, text='{"value":"ok"}', tokens=12):
+        self.choices = [SimpleNamespace(message=SimpleNamespace(content=text))]
+        self.usage = SimpleNamespace(total_tokens=tokens)
+
 
 class FakeClient:
+    def __init__(self, resp=None):
+        self._resp = resp or FakeResp()
+
     class chat:
         class completions:
             @staticmethod
             async def create(**kwargs):
                 return FakeResp()
 
-def test_json_to_model(monkeypatch):
-    settings=SimpleNamespace(local_model="m",local_base_url="u",local_api_key="k",flash_model="fm",flash_base_url="fu",flash_api_key="fk",flagship_model="sm",flagship_base_url="su",flagship_api_key="sk",orchestration_timeout_s=6)
-    client=LLMClient(settings)
-    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FakeClient())
-    result=asyncio.run(client.chat_json("orchestration", [{"role":"user","content":"x"}], Out))
-    assert result.value == "ok"
-    assert client.records[0]["total_tokens"] == 12
 
-def test_all_failed():
-    settings=SimpleNamespace(local_model="",local_base_url="",local_api_key="",flash_model="",flash_base_url="",flash_api_key="",flagship_model="",flagship_base_url="",flagship_api_key="",orchestration_timeout_s=6)
-    client=LLMClient(settings)
-    with pytest.raises(LLMError):
+# A. JSON -> Pydantic 转换测试
+def test_json_to_pydantic(monkeypatch, tmp_path):
+    log_file = tmp_path / "usage.jsonl"
+    settings = make_settings(llm_usage_log_path=str(log_file))
+    client = LLMClient(settings)
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FakeClient())
+
+    result = asyncio.run(client.chat_json("orchestration", [{"role": "user", "content": "x"}], Out))
+
+    assert result.value == "ok"
+    assert len(client.records) == 1
+    rec = client.records[0]
+    assert rec["stage"] == "orchestration"
+    assert rec["model"] == "local_m"
+    assert rec["success"] is True
+    assert rec["error"] is None
+    assert rec["total_tokens"] == 12
+    assert isinstance(rec["ttft_ms"], (int, float))
+    assert rec["ttft_ms"] >= 0
+
+
+# B. ValidationError retry 一次测试（第1次校验失败重试，第2次成功）
+def test_validation_error_retry_once(monkeypatch, tmp_path):
+    calls = []
+    log_file = tmp_path / "usage.jsonl"
+
+    class BadThenGood:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    calls.append(kwargs.get("model"))
+                    if len(calls) == 1:
+                        # 缺失必要字段 value，触发 ValidationError
+                        return FakeResp('{"bad_key": 123}', tokens=5)
+                    return FakeResp('{"value": "retry_ok"}', tokens=8)
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: BadThenGood(**x))
+    client = LLMClient(make_settings(llm_usage_log_path=str(log_file)))
+
+    result = asyncio.run(client.chat_json("orchestration", [], Out))
+    assert result.value == "retry_ok"
+    # 同一模型 local_m 调用了2次（初始+1次重试）
+    assert calls == ["local_m", "local_m"]
+    # 恰好产生 2 条调用记录，无重复记录（Astra 反馈 4）
+    assert len(client.records) == 2
+    assert client.records[0]["success"] is False
+    assert client.records[0]["error"] == "validation_error"
+    assert client.records[0]["total_tokens"] == 5
+    assert client.records[1]["success"] is True
+    assert client.records[1]["error"] is None
+    assert client.records[1]["total_tokens"] == 8
+
+
+# C1. Fallback 成功：编排模式 local 失败重试1次后仍失败，fallback flash 成功
+def test_fallback_orchestration_local_to_flash(monkeypatch, tmp_path):
+    calls = []
+    log_file = tmp_path / "usage.jsonl"
+
+    class LocalFailFlashSuccess:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    m = kwargs.get("model")
+                    calls.append(m)
+                    if m == "local_m":
+                        # local 两次都返回非法结构
+                        return FakeResp('{"wrong": 1}', tokens=3)
+                    # flash 返回合法数据
+                    return FakeResp('{"value": "flash_ok"}', tokens=15)
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: LocalFailFlashSuccess(**x))
+    client = LLMClient(make_settings(llm_usage_log_path=str(log_file)))
+
+    result = asyncio.run(client.chat_json("orchestration", [], Out))
+    assert result.value == "flash_ok"
+    # local 失败 -> retry 1次 -> fallback flash 成功
+    assert calls == ["local_m", "local_m", "flash_m"]
+    assert len(client.records) == 3
+    assert client.records[0]["model"] == "local_m" and client.records[0]["success"] is False
+    assert client.records[1]["model"] == "local_m" and client.records[1]["success"] is False
+    assert client.records[2]["model"] == "flash_m" and client.records[2]["success"] is True
+
+
+# C2. Fallback 成功：评分模式 flagship 优先，flagship 失败，local 接管成功
+def test_scoring_flagship_first_and_local_fallback(monkeypatch, tmp_path):
+    calls = []
+    log_file = tmp_path / "usage.jsonl"
+
+    class FlagshipFailLocalSuccess:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    m = kwargs.get("model")
+                    calls.append(m)
+                    if m == "flagship_m":
+                        raise RuntimeError("flagship service unavailable")
+                    return FakeResp('{"value": "local_fallback_ok"}', tokens=20)
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FlagshipFailLocalSuccess(**x))
+    client = LLMClient(make_settings(llm_usage_log_path=str(log_file)))
+
+    result = asyncio.run(client.chat_json("scoring", [], Out))
+    assert result.value == "local_fallback_ok"
+    # flagship 优先尝试，失败后 local 接管
+    assert calls == ["flagship_m", "local_m"]
+    assert len(client.records) == 2
+    assert client.records[0]["model"] == "flagship_m" and client.records[0]["success"] is False
+    assert client.records[0]["error"] == "RuntimeError"
+    assert client.records[1]["model"] == "local_m" and client.records[1]["success"] is True
+
+
+# D. 分阶段 timeout 边界与选择测试
+def test_timeout_forwarded_and_stage_selection(monkeypatch):
+    seen_timeouts = {}
+
+    class TimeoutRecorder:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    model = kwargs.get("model")
+                    seen_timeouts[model] = kwargs.get("timeout")
+                    return FakeResp('{"value": "ok"}')
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: TimeoutRecorder(**x))
+    client = LLMClient(make_settings(llm_orchestration_timeout_s=6.0, llm_scoring_timeout_s=60.0))
+
+    # orchestration 阶段应传递 6.0s
+    asyncio.run(client.chat_json("orchestration", [], Out))
+    assert seen_timeouts["local_m"] == 6.0
+
+    # scoring 阶段应传递 60.0s
+    asyncio.run(client.chat_json("scoring", [], Out))
+    assert seen_timeouts["flagship_m"] == 60.0
+
+
+# E. 全链失败产生明确 LLMError
+def test_all_failed_raises_llmerror(monkeypatch):
+    class AlwaysFail:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    raise TimeoutError("connection timed out")
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: AlwaysFail(**x))
+    client = LLMClient(make_settings())
+
+    with pytest.raises(LLMError, match="all llm attempts failed"):
         asyncio.run(client.chat_json("orchestration", [], Out))
 
 
-def test_retry_and_fallback(monkeypatch):
-    calls=[]
-    class BadThenGood:
-        def __init__(self, url): self.url=url
+# F & G. usage 字段存在与持久化日志测试（包含 total_tokens、ttft_ms，记录失败与无敏感字段）
+def test_usage_logging_fields_and_persistence(monkeypatch, tmp_path):
+    log_file = tmp_path / "usage_test.jsonl"
+    settings = make_settings(llm_usage_log_path=str(log_file))
+
+    class MixedOutcome:
+        def __init__(self, **kwargs):
+            pass
+
         class chat:
             class completions:
                 @staticmethod
                 async def create(**kwargs):
-                    calls.append(kwargs.get('model'))
-                    if len(calls)==1:
-                        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{\"bad\":1}'))], usage=SimpleNamespace(total_tokens=1))
-                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{\"value\":\"ok\"}'))], usage=SimpleNamespace(total_tokens=2))
-    monkeypatch.setattr('server.services.llm.AsyncOpenAI', lambda **x: BadThenGood(x))
-    c=LLMClient(make_settings())
-    assert asyncio.run(c.chat_json('orchestration',[],Out)).value=='ok'
-    assert len(calls)==2
+                    m = kwargs.get("model")
+                    if m == "local_m":
+                        raise TimeoutError("timeout on local")
+                    return FakeResp('{"value": "ok"}', tokens=42)
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: MixedOutcome(**x))
+    client = LLMClient(settings)
+
+    result = asyncio.run(client.chat_json("orchestration", [], Out))
+    assert result.value == "ok"
+
+    # 检查 in-memory records
+    assert len(client.records) == 2
+    fail_rec, succ_rec = client.records[0], client.records[1]
+
+    # 验证关键字段均存在
+    for r in [fail_rec, succ_rec]:
+        assert "stage" in r
+        assert "model" in r
+        assert "success" in r
+        assert "ttft_ms" in r
+        assert "total_tokens" in r
+        assert "error" in r
+        # 严禁记录 API Key 和完整回答（契约安全规范）
+        assert "api_key" not in r
+        assert "content" not in r
+        assert "messages" not in r
+
+    assert fail_rec["success"] is False
+    assert fail_rec["error"] == "TimeoutError"
+    assert succ_rec["success"] is True
+    assert succ_rec["total_tokens"] == 42
+    assert succ_rec["ttft_ms"] >= 0
+
+    # 验证日志文件已落盘
+    assert log_file.exists()
+    lines = log_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    loaded = [json.loads(line) for line in lines]
+    assert loaded[0]["model"] == "local_m" and loaded[0]["success"] is False
+    assert loaded[1]["model"] == "flash_m" and loaded[1]["success"] is True
 
 
-def test_timeout_forwarded(monkeypatch):
-    seen={}
-    class C:
-        class chat:
-            class completions:
-                @staticmethod
-                async def create(**kwargs):
-                    seen['timeout']=kwargs.get('timeout')
-                    return FakeResp('{\"value\":\"ok\"}')
-    monkeypatch.setattr('server.services.llm.AsyncOpenAI', lambda **x:C())
-    asyncio.run(LLMClient(make_settings()).chat_json('orchestration',[],Out))
-    assert seen['timeout']==6
+# Astra 审查项 1: Settings Pydantic alias 映射验证
+def test_settings_reads_llm_env_aliases(monkeypatch):
+    monkeypatch.setenv("LLM_LOCAL_MODEL", "custom-local-qwen")
+    monkeypatch.setenv("LLM_FLASH_MODEL", "custom-flash-qwen")
+    monkeypatch.setenv("LLM_FLAGSHIP_MODEL", "custom-flagship-qwen")
+    monkeypatch.setenv("LLM_ORCHESTRATION_TIMEOUT_S", "7.5")
+    monkeypatch.setenv("LLM_SCORING_TIMEOUT_S", "45.0")
+    monkeypatch.setenv("LLM_USAGE_LOG_PATH", "logs/custom_usage.jsonl")
+
+    s = Settings()
+    assert s.local_model == "custom-local-qwen"
+    assert s.flash_model == "custom-flash-qwen"
+    assert s.flagship_model == "custom-flagship-qwen"
+    assert s.llm_orchestration_timeout_s == 7.5
+    assert s.orchestration_timeout_s == 7.5
+    assert s.llm_scoring_timeout_s == 45.0
+    assert s.scoring_timeout_s == 45.0
+    assert s.llm_usage_log_path == "logs/custom_usage.jsonl"
 
 
+# Astra 审查项 4: 配置缺失时不产生重复日志
+def test_missing_config_no_duplicate_records(tmp_path):
+    log_file = tmp_path / "missing_cfg.jsonl"
+    settings = SimpleNamespace(
+        local_model=None,
+        local_base_url=None,
+        local_api_key=None,
+        flash_model=None,
+        flash_base_url=None,
+        flash_api_key=None,
+        llm_orchestration_timeout_s=6.0,
+        llm_usage_log_path=str(log_file),
+    )
+    client = LLMClient(settings)
+
+    with pytest.raises(LLMError, match="all llm attempts failed"):
+        asyncio.run(client.chat_json("orchestration", [], Out))
+
+    # local 和 flash 各产生 1 条 missing_config 记录，绝不重复
+    assert len(client.records) == 2
+    assert [r["error"] for r in client.records] == ["missing_config", "missing_config"]
+
+
+# 数据库与模型可空性测试
 def test_models_nullable_and_create():
-    from server.db import Base
-    from server.models import User, Job, Question, Session, Answer, Report
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as DBSession
-    engine=create_engine('sqlite:///:memory:')
+    from server.db import Base
+    from server.models import Answer, Job, Question, Report, Session, User
+
+    engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with DBSession(engine) as s:
-        u=User(role='student')
-        j=Job(family='ai',title='test')
-        s.add_all([u,j]); s.flush()
-        se=Session(user_id=u.id,job_id=j.id,mode='graduate',status='active')
-        s.add(se); s.flush()
-        s.add(Answer(session_id=se.id,q_seq=1,question_text='q',answer_text='a',is_followup=False,is_retry=False))
+        u = User(role="student")
+        j = Job(family="ai", title="test")
+        s.add_all([u, j])
+        s.flush()
+        se = Session(user_id=u.id, job_id=j.id, mode="graduate", status="active")
+        s.add(se)
+        s.flush()
+        s.add(Answer(session_id=se.id, q_seq=1, question_text="q", answer_text="a", is_followup=False, is_retry=False))
         s.add(Report(session_id=se.id))
         s.commit()
-
-
-def test_stage_model_switch_order(monkeypatch):
-    calls=[]
-    class C:
-        class chat:
-            class completions:
-                @staticmethod
-                async def create(**kwargs):
-                    calls.append(kwargs["model"])
-                    return FakeResp('{"value":"ok"}')
-    monkeypatch.setattr('server.services.llm.AsyncOpenAI', lambda **x:C())
-    asyncio.run(LLMClient(make_settings()).chat_json('scoring', [], Out))
-    assert calls[0] == 'sm'
-
-
-def test_failure_is_recorded(monkeypatch):
-    class C:
-        class chat:
-            class completions:
-                @staticmethod
-                async def create(**kwargs):
-                    raise TimeoutError('timeout')
-    monkeypatch.setattr('server.services.llm.AsyncOpenAI', lambda **x:C())
-    c=LLMClient(make_settings())
-    with pytest.raises(LLMError):
-        asyncio.run(c.chat_json('orchestration', [], Out))
-    assert any(r['error']=='TimeoutError' for r in c.records)
