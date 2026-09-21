@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
 from server.db import SessionLocal
@@ -32,7 +32,7 @@ def list_jobs(db: Session = Depends(get_db)):
 
 
 @router.get("/{job_id}/questions")
-def list_job_questions(job_id: int, db: Session = Depends(get_db)):
+def list_job_questions(job_id: int = Path(..., ge=1), db: Session = Depends(get_db)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if job is None:
         raise HTTPException(

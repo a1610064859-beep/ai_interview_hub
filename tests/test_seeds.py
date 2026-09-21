@@ -129,3 +129,18 @@ def test_get_job_questions_not_found(client):
     err = response.json()
     assert err["detail"]["code"] == "JOB_NOT_FOUND"
     assert "不存在" in err["detail"]["message"]
+
+
+# 6. GET /api/jobs/{job_id}/questions 非正整数 ID 422 测试
+def test_get_job_questions_invalid_id(client):
+    # 非法数字（0 或负数）
+    res_zero = client.get("/api/jobs/0/questions")
+    assert res_zero.status_code == 422
+
+    res_neg = client.get("/api/jobs/-1/questions")
+    assert res_neg.status_code == 422
+
+    # 非法非数字字符串
+    res_str = client.get("/api/jobs/not-an-id/questions")
+    assert res_str.status_code == 422
+
