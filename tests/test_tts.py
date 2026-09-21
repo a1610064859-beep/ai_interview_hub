@@ -267,3 +267,32 @@ def test_tts_static_audio_route_serving():
         # 路径遍历防护测试
         traversal_resp = client.get("/audio/../config.py")
         assert traversal_resp.status_code in [403, 404]
+
+
+@pytest.mark.anyio
+async def test_tts_atomic_write_and_no_corrupt_fragments_reused(tmp_path):
+    """验证写入临时文件且原子替换：网络中断留下非零残片时，临时文件被删除，目标文件不生成且不会被复用"""
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    target_mp3 = audio_dir / "session_99_q1.mp3"
+
+    class FakeCommunicateWithInterruption:
+        def __init__(self, text, voice):
+            self.text = text
+            self.voice = voice
+
+        async def save(self, path):
+            # 模拟网络中断：写入非零残片后断开连接
+            Path(path).write_bytes(b"CORRUPTED_NON_ZERO_PARTIAL_BYTES")
+            raise ConnectionResetError("Connection lost during audio download")
+
+    with patch("edge_tts.Communicate", FakeCommunicateWithInterruption):
+        success = await tts.synthesize_to_file("测试断网文本", target_mp3)
+        assert success is False
+        # 目标文件绝不应该生成
+        assert not target_mp3.exists()
+        # 临时文件已被清理，目录下无任何残片
+        tmp_files = list(audio_dir.glob(".tmp_*"))
+        assert len(tmp_files) == 0
+        # 绝不被当作有效音频复用
+        assert tts.get_audio_url_if_exists(target_mp3.name) is None

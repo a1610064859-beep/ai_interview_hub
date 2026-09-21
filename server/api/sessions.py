@@ -447,21 +447,3 @@ async def submit_text_answer(
             report_id=new_report.id,
             transition_audio_url=transition_audio_url,
         )
-
-
-@router.get("/{sid}/transition")
-def get_session_transition(
-    sid: int = Path(..., ge=1),
-    answer_idx: int = 0,
-):
-    with SessionLocal() as db:
-        session = db.query(Session).filter(Session.id == sid).first()
-        if not session:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"},
-            )
-        ans_count = db.query(Answer).filter(Answer.session_id == sid).count()
-    idx = answer_idx if answer_idx > 0 else ans_count
-    url = tts.get_session_transition_url(sid, idx)
-    return {"transition_audio_url": url}

@@ -8,14 +8,18 @@ import asyncio
 import logging
 from pathlib import Path
 
+import os
+from uuid import uuid4
+
 from server.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 async def synthesize_to_file(text: str, output_path: Path) -> bool:
-    """使用 edge-tts 将文本合成为 MP3 音频文件并落盘。
-    任何失败（网络错误、403、超时、TTS关闭）均静默捕获并返回 False。
+    """使用 edge-tts 将文本合成为 MP3 音频文件并原子落盘。
+    写入临时文件，成功后原子替换目标文件；
+    任何异常（网络中断、403、超时等）立即删除临时文件，杜绝非零残片污染或被误复用。
     """
     if not settings.tts_enabled:
         return False
@@ -31,25 +35,27 @@ async def synthesize_to_file(text: str, output_path: Path) -> bool:
         return False
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_name(f".tmp_{uuid4().hex}_{output_path.name}")
 
     try:
         communicate = edge_tts.Communicate(stripped_text, voice=settings.tts_voice)
         await asyncio.wait_for(
-            communicate.save(str(output_path)),
+            communicate.save(str(temp_path)),
             timeout=settings.tts_timeout_s,
         )
-        if output_path.is_file() and output_path.stat().st_size > 0:
+        if temp_path.is_file() and temp_path.stat().st_size > 0:
+            os.replace(temp_path, output_path)
             return True
         return False
     except Exception as exc:
         logger.warning("TTS 语音合成失败 (text=%s, file=%s): %s", stripped_text[:20], output_path.name, exc)
-        # 若生成了损坏或零字节文件，清理它
-        if output_path.is_file() and output_path.stat().st_size == 0:
+        return False
+    finally:
+        if temp_path.is_file():
             try:
-                output_path.unlink(missing_ok=True)
+                temp_path.unlink(missing_ok=True)
             except Exception:
                 pass
-        return False
 
 
 def get_audio_url_if_exists(filename: str) -> str | None:
