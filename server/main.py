@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from server.api.jobs import router as jobs_router
+from server.api.sessions import router as sessions_router
+from server.api.reports import router as reports_router
 from server.db import init_db
 
 
@@ -19,4 +21,7 @@ app = FastAPI(
 )
 
 app.include_router(jobs_router)
+app.include_router(sessions_router)
+app.include_router(reports_router)
+
 
