@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy import Integer, String, Text, JSON, Boolean, Float, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from .db import Base
@@ -21,7 +22,10 @@ class Question(Base):
 class Session(Base):
     __tablename__="sessions"
     id: Mapped[int]=mapped_column(Integer, primary_key=True); user_id: Mapped[int]=mapped_column(Integer); job_id: Mapped[int]=mapped_column(Integer)
-    mode: Mapped[str]=mapped_column(String(32)); started_at: Mapped[str|None]=mapped_column(DateTime, nullable=True); status: Mapped[str]=mapped_column(String(32))
+    mode: Mapped[str]=mapped_column(String(32)); started_at: Mapped[datetime|None]=mapped_column(DateTime, nullable=True); status: Mapped[str]=mapped_column(String(32))
+    pending_question_json: Mapped[dict|None]=mapped_column(JSON, nullable=True)
+    lease_token: Mapped[str|None]=mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime|None]=mapped_column(DateTime, nullable=True)
 class Answer(Base):
     __tablename__="answers"
     id: Mapped[int]=mapped_column(Integer, primary_key=True); session_id: Mapped[int]=mapped_column(Integer); q_seq: Mapped[int]=mapped_column(Integer)

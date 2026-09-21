@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import settings
 
@@ -7,6 +7,22 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 class Base(DeclarativeBase):
     pass
 
-def init_db():
+def ensure_schema_upgrades(target_engine=None):
+    use_engine = target_engine or engine
+    with use_engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(sessions)"))
+        cols = {row[1] for row in result.fetchall()}
+        if cols:
+            if "pending_question_json" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN pending_question_json JSON"))
+            if "lease_token" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN lease_token VARCHAR(64)"))
+            if "lease_expires_at" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN lease_expires_at DATETIME"))
+            conn.commit()
+
+def init_db(target_engine=None):
     from . import models
-    Base.metadata.create_all(engine)
+    use_engine = target_engine or engine
+    Base.metadata.create_all(use_engine)
+    ensure_schema_upgrades(use_engine)

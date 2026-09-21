@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     flagship_base_url: str | None = Field(None, validation_alias=AliasChoices("LLM_FLAGSHIP_BASE_URL", "FLAGSHIP_BASE_URL", "flagship_base_url"))
     flagship_api_key: str | None = Field(None, validation_alias=AliasChoices("LLM_FLAGSHIP_API_KEY", "FLAGSHIP_API_KEY", "flagship_api_key"))
     flagship_model: str | None = Field(None, validation_alias=AliasChoices("LLM_FLAGSHIP_MODEL", "FLAGSHIP_MODEL", "flagship_model"))
+    lease_duration_seconds: int = Field(30, validation_alias=AliasChoices("LEASE_DURATION_SECONDS", "lease_duration_seconds"))
+    lease_renew_interval_seconds: int = Field(10, validation_alias=AliasChoices("LEASE_RENEW_INTERVAL_SECONDS", "lease_renew_interval_seconds"))
 
     @property
     def orchestration_timeout_s(self) -> float:
