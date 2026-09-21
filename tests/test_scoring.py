@@ -158,7 +158,7 @@ def test_evidence_validation_exact_string_spaces():
 
 @pytest.mark.anyio
 async def test_score_interview_partial_dimensions_preserved():
-    """复现阻断 1：逐维保留有效结果；某维缺失/证据无效仅影响该维，不丢弃整次评分"""
+    """逐维保留有效结果；重试后依然无效的维度置 None，不影响其余有效维度"""
     answers = ["我熟悉CANoe工具链", "具备安全红线意识"]
     job_info = {"title": "智驾测试", "jd_digest": "...", "terms": ["CANoe"]}
 
@@ -180,12 +180,19 @@ async def test_score_interview_partial_dimensions_preserved():
         improvement=["建议2"],
     )
 
-    with patch("server.services.scoring.chat_json", AsyncMock(side_effect=[res1, res2])):
+    async def mock_chat(stage, messages, model):
+        # 无论首次还是重试均返回含有无效维度的结果
+        if "亮点2" in str(messages) or len(messages) > 1 and "professional_match(专业匹配度)" in str(messages):
+            pass
+        return res1 if "亮点1" not in str(messages) else res2
+
+    # 使用 side_effect 支持 call 1 (首次+重试) 和 call 2 (首次+重试)
+    with patch("server.services.scoring.chat_json", AsyncMock(side_effect=[res1, res1, res2, res2])):
         report = await score_interview(answers=answers, job_info=job_info, mode="text")
         # 专业匹配度 (90 + 86)/2 = 88.0，岗位素养 85.0 均保留
         assert report["dimensions"]["professional_match"]["score"] == 88.0
         assert report["dimensions"]["job_competence"]["score"] == 85.0
-        # 逻辑结构因证据无效置 None，不能使整个报告失败
+        # 逻辑结构因重试后仍无效置 None
         assert report["dimensions"]["logic_structure"]["score"] is None
         assert "未获得通过校验的双次评分" in report["dimensions"]["logic_structure"]["reason"]
         # overall 计算保留的两个有效维度均值 (88.0 + 85.0)/2 = 86.5
@@ -194,7 +201,7 @@ async def test_score_interview_partial_dimensions_preserved():
 
 @pytest.mark.anyio
 async def test_score_interview_all_invalid_evidence_produces_null_report_not_503():
-    """复现阻断 1：两次均无有效证据应生成全空报告，绝不能误判为基础设施 503"""
+    """两次均无有效证据应生成全空报告，绝不能误判为基础设施 503"""
     answers = ["回答A", "回答B"]
     job_info = {"title": "智驾测试", "jd_digest": "...", "terms": []}
 
@@ -207,7 +214,7 @@ async def test_score_interview_all_invalid_evidence_produces_null_report_not_503
         improvement=["建议多练习"],
     )
 
-    with patch("server.services.scoring.chat_json", AsyncMock(side_effect=[res_all_invalid, res_all_invalid])):
+    with patch("server.services.scoring.chat_json", AsyncMock(side_effect=[res_all_invalid, res_all_invalid, res_all_invalid, res_all_invalid])):
         # 不能抛出 ScoringUnavailableError
         report = await score_interview(answers=answers, job_info=job_info, mode="text")
         assert report["overall"] is None
@@ -216,3 +223,67 @@ async def test_score_interview_all_invalid_evidence_produces_null_report_not_503
         assert report["dimensions"]["job_competence"]["score"] is None
         assert report["dimensions"]["expression_fluency"]["score"] is None
 
+
+@pytest.mark.anyio
+async def test_score_interview_retry_evidence_correction_success():
+    """测试 evidence 不合规时针对性重试 1 次：第一次证据无效，第二次一次性修正成功"""
+    answers = ["我通常使用CANoe分析报文时间戳", "具备极强的安全底线意识"]
+    job_info = {"title": "智驾测试", "jd_digest": "负责车载总线测试", "terms": ["CANoe"]}
+
+    # 调用 1 首次：logic_structure 证据为无效的"凭空编造的逻辑"，professional_match 证据有效
+    res1_attempt0 = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=90.0, evidence="使用CANoe分析报文", reason="掌握工具"),
+        logic_structure=SingleDimensionScore(score=80.0, evidence="凭空编造的逻辑", reason="待修正"),
+        job_competence=SingleDimensionScore(score=85.0, evidence="具备极强的安全底线意识", reason="素养好"),
+        highlights=["亮点1"],
+        concerns=[],
+        improvement=["建议1"],
+    )
+    # 调用 1 重试：logic_structure 证据被修正为候选人原话"分析报文时间戳"（有效！）
+    res1_attempt1 = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=90.0, evidence="使用CANoe分析报文", reason="掌握工具"),
+        logic_structure=SingleDimensionScore(score=82.0, evidence="分析报文时间戳", reason="结构清晰"),
+        job_competence=SingleDimensionScore(score=85.0, evidence="具备极强的安全底线意识", reason="素养好"),
+        highlights=["亮点1"],
+        concerns=[],
+        improvement=["建议1"],
+    )
+
+    # 调用 2：全维度一次性成功
+    res2 = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=88.0, evidence="使用CANoe分析报文", reason="掌握工具"),
+        logic_structure=SingleDimensionScore(score=84.0, evidence="分析报文时间戳", reason="结构清晰"),
+        job_competence=SingleDimensionScore(score=85.0, evidence="具备极强的安全底线意识", reason="素养好"),
+        highlights=["亮点2"],
+        concerns=[],
+        improvement=["建议2"],
+    )
+
+    correction_prompts_seen = []
+
+    async def mock_chat_json(stage, messages, model):
+        # 如果 messages 长度大于 2，说明是追加了修正提示的重试
+        if len(messages) > 2:
+            correction_prompts_seen.append(messages[-1]["content"])
+            return res1_attempt1
+        # 首次调用：给调用 1 返回含错误的结果，给调用 2 返回全正确的结果
+        # 判断是调用 1 还是调用 2：调用 1 第一次遇到，返回 res1_attempt0
+        if not hasattr(mock_chat_json, "call1_done"):
+            mock_chat_json.call1_done = True
+            return res1_attempt0
+        return res2
+
+    with patch("server.services.scoring.chat_json", mock_chat_json):
+        report = await score_interview(answers=answers, job_info=job_info, mode="text")
+
+        # 验证修正重试发生且一次性指明了无效维度
+        assert len(correction_prompts_seen) == 1
+        assert "logic_structure(逻辑结构)" in correction_prompts_seen[0]
+
+        # 验证重试修正后，logic_structure 成功保留并计算均值 (82.0 + 84.0)/2 = 83.0
+        assert report["dimensions"]["logic_structure"]["score"] == 83.0
+        assert report["dimensions"]["logic_structure"]["evidence"] == "分析报文时间戳"
+        assert report["dimensions"]["professional_match"]["score"] == 89.0
+        assert report["dimensions"]["job_competence"]["score"] == 85.0
+        # overall: (89.0 + 83.0 + 85.0)/3 = 85.666... -> 85.7
+        assert report["overall"] == 85.7

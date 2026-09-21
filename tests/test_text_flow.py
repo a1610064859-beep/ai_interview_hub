@@ -630,5 +630,3 @@ async def test_orchestrator_prompt_injects_jd_and_terms():
     assert "负责车载以太网与CAN-FD通信总线测试" in prompt_content
     assert "SOME/IP" in prompt_content
     assert "DoIP" in prompt_content
-
-

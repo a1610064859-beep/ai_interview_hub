@@ -81,16 +81,52 @@ def calculate_overall(dimensions: dict[str, dict]) -> Optional[float]:
 
 async def call_scoring_llm(messages: list, answers: list[str]) -> SingleScoringResult:
     """单次调用评分模型并按维度校验证据合规性：
-    逐维保留有效结果，某维证据不合规仅置该维为 None，不丢弃整次评分；
-    真正底层 LLM 模型调用失败时向外抛出异常。
+    1. 某维度证据无效时发起一次性针对性重试（一次修正请求同时修正全部无效维度）；
+    2. 重试后依然不合规的维度置为 None，逐维保留其余有效维度；
+    3. 真正底层 LLM 模型调用失败时向外抛出异常。
     """
-    res = await chat_json("scoring", messages, SingleScoringResult)
-    if res.professional_match and not validate_evidence(res.professional_match.evidence, answers):
-        res.professional_match = None
-    if res.logic_structure and not validate_evidence(res.logic_structure.evidence, answers):
-        res.logic_structure = None
-    if res.job_competence and not validate_evidence(res.job_competence.evidence, answers):
-        res.job_competence = None
+    for attempt in range(2):
+        res = await chat_json("scoring", messages, SingleScoringResult)
+
+        # 逐维核对 evidence 是否合规
+        p_valid = bool(res.professional_match and validate_evidence(res.professional_match.evidence, answers))
+        l_valid = bool(res.logic_structure and validate_evidence(res.logic_structure.evidence, answers))
+        j_valid = bool(res.job_competence and validate_evidence(res.job_competence.evidence, answers))
+
+        invalid_dims = []
+        if res.professional_match and not p_valid:
+            invalid_dims.append("professional_match(专业匹配度)")
+        if res.logic_structure and not l_valid:
+            invalid_dims.append("logic_structure(逻辑结构)")
+        if res.job_competence and not j_valid:
+            invalid_dims.append("job_competence(岗位素养)")
+
+        # 若全部已评分维度的 evidence 均合规，直接返回
+        if not invalid_dims:
+            return res
+
+        # 首次调用若存在不合规维度，发起一次性针对性修正重试
+        if attempt == 0:
+            dims_str = "、".join(invalid_dims)
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"请注意：以下维度的 evidence 未通过字面原话校验：{dims_str}。\n"
+                    "evidence 必须是候选人某一单条回答正文中出现的字面连续子串（必须与候选人原话完全一致，区分空格且不超过25字），"
+                    "严禁修改原字词或跨句拼接。请重新输出完整的评分JSON（一次性修正上述维度的证据与评价）。"
+                ),
+            })
+            continue
+
+        # 重试后依然不合规的维度，逐维置 None 保留其余有效维度
+        if res.professional_match and not p_valid:
+            res.professional_match = None
+        if res.logic_structure and not l_valid:
+            res.logic_structure = None
+        if res.job_competence and not j_valid:
+            res.job_competence = None
+        return res
+
     return res
 
 
