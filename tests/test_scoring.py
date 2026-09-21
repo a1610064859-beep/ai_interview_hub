@@ -146,3 +146,73 @@ async def test_score_interview_infra_failure():
     with patch("server.services.scoring.call_scoring_llm", AsyncMock(side_effect=Exception("LLM down"))):
         with pytest.raises(ScoringUnavailableError):
             await score_interview(answers=answers, job_info=job_info, mode="text")
+
+
+def test_evidence_validation_exact_string_spaces():
+    """复现阻断 2：证据检查和实际保存的字符串必须一致，长度和匹配针对原字符串"""
+    answers = ["我通常使用CANoe排查总线故障。"]
+    # 回答中只有"CANoe"，没有带首尾空格的" CANoe "，必须校验失败
+    assert validate_evidence(" CANoe ", answers) is False
+    assert validate_evidence("CANoe", answers) is True
+
+
+@pytest.mark.anyio
+async def test_score_interview_partial_dimensions_preserved():
+    """复现阻断 1：逐维保留有效结果；某维缺失/证据无效仅影响该维，不丢弃整次评分"""
+    answers = ["我熟悉CANoe工具链", "具备安全红线意识"]
+    job_info = {"title": "智驾测试", "jd_digest": "...", "terms": ["CANoe"]}
+
+    # mock 结果中 logic_structure 证据无效（不在 answers 中）
+    res1 = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=90.0, evidence="熟悉CANoe", reason="掌握工具"),
+        logic_structure=SingleDimensionScore(score=80.0, evidence="回答结构良好不存在于文本", reason="无效证据"),
+        job_competence=SingleDimensionScore(score=85.0, evidence="具备安全红线意识", reason="素养好"),
+        highlights=["亮点1"],
+        concerns=[],
+        improvement=["建议1"],
+    )
+    res2 = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=86.0, evidence="熟悉CANoe", reason="掌握工具"),
+        logic_structure=SingleDimensionScore(score=82.0, evidence="另一个凭空造的证据", reason="无效证据"),
+        job_competence=SingleDimensionScore(score=85.0, evidence="具备安全红线意识", reason="素养好"),
+        highlights=["亮点2"],
+        concerns=[],
+        improvement=["建议2"],
+    )
+
+    with patch("server.services.scoring.chat_json", AsyncMock(side_effect=[res1, res2])):
+        report = await score_interview(answers=answers, job_info=job_info, mode="text")
+        # 专业匹配度 (90 + 86)/2 = 88.0，岗位素养 85.0 均保留
+        assert report["dimensions"]["professional_match"]["score"] == 88.0
+        assert report["dimensions"]["job_competence"]["score"] == 85.0
+        # 逻辑结构因证据无效置 None，不能使整个报告失败
+        assert report["dimensions"]["logic_structure"]["score"] is None
+        assert "未获得通过校验的双次评分" in report["dimensions"]["logic_structure"]["reason"]
+        # overall 计算保留的两个有效维度均值 (88.0 + 85.0)/2 = 86.5
+        assert report["overall"] == 86.5
+
+
+@pytest.mark.anyio
+async def test_score_interview_all_invalid_evidence_produces_null_report_not_503():
+    """复现阻断 1：两次均无有效证据应生成全空报告，绝不能误判为基础设施 503"""
+    answers = ["回答A", "回答B"]
+    job_info = {"title": "智驾测试", "jd_digest": "...", "terms": []}
+
+    res_all_invalid = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=90.0, evidence="假证据1", reason="r1"),
+        logic_structure=SingleDimensionScore(score=80.0, evidence="假证据2", reason="r2"),
+        job_competence=SingleDimensionScore(score=85.0, evidence="假证据3", reason="r3"),
+        highlights=[],
+        concerns=[],
+        improvement=["建议多练习"],
+    )
+
+    with patch("server.services.scoring.chat_json", AsyncMock(side_effect=[res_all_invalid, res_all_invalid])):
+        # 不能抛出 ScoringUnavailableError
+        report = await score_interview(answers=answers, job_info=job_info, mode="text")
+        assert report["overall"] is None
+        assert report["dimensions"]["professional_match"]["score"] is None
+        assert report["dimensions"]["logic_structure"]["score"] is None
+        assert report["dimensions"]["job_competence"]["score"] is None
+        assert report["dimensions"]["expression_fluency"]["score"] is None
+

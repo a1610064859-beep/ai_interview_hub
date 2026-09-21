@@ -21,9 +21,9 @@ class SingleDimensionScore(BaseModel):
 
 
 class SingleScoringResult(BaseModel):
-    professional_match: SingleDimensionScore
-    logic_structure: SingleDimensionScore
-    job_competence: SingleDimensionScore
+    professional_match: Optional[SingleDimensionScore] = None
+    logic_structure: Optional[SingleDimensionScore] = None
+    job_competence: Optional[SingleDimensionScore] = None
     highlights: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
     improvement: list[str] = Field(default_factory=list)
@@ -31,15 +31,17 @@ class SingleScoringResult(BaseModel):
 
 def validate_evidence(evidence: Optional[str], answers: list[str]) -> bool:
     """严格校验引用原话证据：
-    1. 非空且长度在 1..25 之间；
-    2. 必须为候选人某一单条回答正文的原文字面连续子串（禁止跨回答拼接，禁止虚构）。
+    1. 空白判断可以使用 strip，但长度及子串匹配必须针对最终返回的原字符串；
+    2. 长度在 1..25 之间；
+    3. 必须为候选人某一单条回答正文的原文字面连续子串（禁止跨回答拼接，禁止虚构）。
     """
     if not evidence or not isinstance(evidence, str):
         return False
-    stripped = evidence.strip()
-    if not (1 <= len(stripped) <= 25):
+    if not evidence.strip():
         return False
-    return any(stripped in ans for ans in answers if ans)
+    if not (1 <= len(evidence) <= 25):
+        return False
+    return any(evidence in ans for ans in answers if ans)
 
 
 def calculate_dimension_average(
@@ -78,25 +80,19 @@ def calculate_overall(dimensions: dict[str, dict]) -> Optional[float]:
 
 
 async def call_scoring_llm(messages: list, answers: list[str]) -> SingleScoringResult:
-    """单次调用评分模型并校验证据合规性，若证据不合规允许重试 1 次"""
-    for attempt in range(2):
-        res = await chat_json("scoring", messages, SingleScoringResult)
-        # 校验三项维度的 evidence 是否在 answers 中字面匹配
-        valid_evidences = (
-            validate_evidence(res.professional_match.evidence, answers)
-            and validate_evidence(res.logic_structure.evidence, answers)
-            and validate_evidence(res.job_competence.evidence, answers)
-        )
-        if valid_evidences:
-            return res
+    """单次调用评分模型并按维度校验证据合规性：
+    逐维保留有效结果，某维证据不合规仅置该维为 None，不丢弃整次评分；
+    真正底层 LLM 模型调用失败时向外抛出异常。
+    """
+    res = await chat_json("scoring", messages, SingleScoringResult)
+    if res.professional_match and not validate_evidence(res.professional_match.evidence, answers):
+        res.professional_match = None
+    if res.logic_structure and not validate_evidence(res.logic_structure.evidence, answers):
+        res.logic_structure = None
+    if res.job_competence and not validate_evidence(res.job_competence.evidence, answers):
+        res.job_competence = None
+    return res
 
-        # 尝试追加提示重试
-        if attempt == 0:
-            messages.append({
-                "role": "user",
-                "content": "请注意：evidence 必须是候选人原话中出现的字面连续子串，长度不得超过25字，严禁修改原字词或跨句拼接，请重新输出评分JSON。",
-            })
-    raise ValueError("Scoring result contains invalid evidence after retry")
 
 
 def build_scoring_prompt(answers: list[str], job_info: dict) -> list[dict]:
@@ -127,28 +123,28 @@ def build_scoring_prompt(answers: list[str], job_info: dict) -> list[dict]:
 
 
 async def score_interview(answers: list[str], job_info: dict, mode: str = "text") -> dict:
-    """执行双评并仲裁汇总出最终报告数据"""
+    """执行双评并仲裁汇总出最终报告数据：
+    1. 逐维保留有效结果；某维缺失仅影响该维；
+    2. 两次均无有效证据生成全空报告；
+    3. 只有当真正模型链不可用（两次调用均抛出异常）时才报 503 ScoringUnavailableError。
+    """
     messages_1 = build_scoring_prompt(answers, job_info)
     messages_2 = build_scoring_prompt(answers, job_info)
 
     # 尝试并行进行两次独立调用
-    res1, res2 = None, None
-    try:
-        results = await asyncio.gather(
-            call_scoring_llm(messages_1, answers),
-            call_scoring_llm(messages_2, answers),
-            return_exceptions=True,
-        )
-        if not isinstance(results[0], Exception):
-            res1 = results[0]
-        if not isinstance(results[1], Exception):
-            res2 = results[1]
-    except Exception as e:
-        logger.error("Scoring gather failed: %s", e)
+    results = await asyncio.gather(
+        call_scoring_llm(messages_1, answers),
+        call_scoring_llm(messages_2, answers),
+        return_exceptions=True,
+    )
 
-    # 若两次调用均因基础设施故障挂掉，抛出 503 异常
-    if res1 is None and res2 is None:
-        raise ScoringUnavailableError("所有评分模型均不可用或返回无效证据")
+    # 只有底层模型基础设施调用均抛出异常，才判定为基础设施不可用 (503)
+    if isinstance(results[0], Exception) and isinstance(results[1], Exception):
+        raise ScoringUnavailableError(f"所有评分模型均不可用: {results[0]}, {results[1]}")
+
+    res1 = results[0] if not isinstance(results[0], Exception) else None
+    res2 = results[1] if not isinstance(results[1], Exception) else None
+
 
     # 计算各维度双评均值
     prof_score, prof_ev, prof_reason = calculate_dimension_average(

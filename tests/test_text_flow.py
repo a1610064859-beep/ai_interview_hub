@@ -560,3 +560,75 @@ async def test_heartbeat_lease_renewal_and_cancellation():
                 assert resp1.status_code == 409
                 assert resp1.json()["detail"]["code"] == "ANSWER_IN_PROGRESS"
 
+
+@pytest.mark.anyio
+async def test_concurrency_stolen_lease_cancels_business_task_without_releasing_barrier():
+    """复现阻断 3：失去所有权时竞争取消业务任务；证明无需释放 mock 屏障，旧请求就能退出"""
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/api/sessions", json={"job_id": 1})
+        sid = resp.json()["sid"]
+
+        # 配置极短心跳
+        with patch.object(settings, "lease_renew_interval_seconds", 0.05), \
+             patch.object(settings, "lease_duration_seconds", 2):
+
+            task_entered = asyncio.Event()
+            # 注意：never_released_barrier 永不 set()！
+            never_released_barrier = asyncio.Event()
+
+            async def mock_forever_hanging_followup(*args, **kwargs):
+                task_entered.set()
+                await never_released_barrier.wait()
+                return None
+
+            with patch("server.services.orchestrator.evaluate_followup", mock_forever_hanging_followup):
+                task = asyncio.create_task(
+                    client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "回答挂起"})
+                )
+                await task_entered.wait()
+
+                # 模拟租约被他人夺走
+                with SessionLocal() as db:
+                    sess = db.query(Session).filter(Session.id == sid).first()
+                    sess.lease_token = "stolen_token"
+                    db.commit()
+
+                # 在不释放 never_released_barrier 的情况下，等待 task 退出（超时 1.5s）
+                resp = await asyncio.wait_for(task, timeout=1.5)
+                assert resp.status_code == 409
+                assert resp.json()["detail"]["code"] == "ANSWER_IN_PROGRESS"
+
+
+@pytest.mark.anyio
+async def test_orchestrator_prompt_injects_jd_and_terms():
+    """复现阻断 4：追问必须注入岗位JD要点与专业术语表"""
+    from server.services.orchestrator import evaluate_followup
+
+    captured_messages = []
+
+    async def mock_chat_json(stage, messages, model):
+        captured_messages.extend(messages)
+        return type("Obj", (), {"need_followup": False, "question": None})()
+
+    job_info = {
+        "title": "智驾系统测试工程师",
+        "jd_digest": "负责车载以太网与CAN-FD通信总线测试",
+        "terms": ["SOME/IP", "DoIP", "CANoe"],
+    }
+
+    with patch("server.services.orchestrator.chat_json", mock_chat_json):
+        await evaluate_followup(
+            question_text="请谈谈通信测试经验",
+            answer_text="我做过相关报文解析",
+            followup_hint="关注以太网协议",
+            job_info=job_info,
+        )
+
+    assert len(captured_messages) == 2
+    prompt_content = captured_messages[1]["content"]
+    assert "智驾系统测试工程师" in prompt_content
+    assert "负责车载以太网与CAN-FD通信总线测试" in prompt_content
+    assert "SOME/IP" in prompt_content
+    assert "DoIP" in prompt_content
+
+

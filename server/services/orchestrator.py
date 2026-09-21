@@ -29,8 +29,12 @@ async def evaluate_followup(
         "3. 追问正文严格禁止超过一句话；\n"
         "4. 若候选人回答已较完整，或追问价值不大，必须返回 need_followup: false。"
     )
+    terms = job_info.get("terms") or []
+    terms_str = ", ".join(terms) if isinstance(terms, list) else str(terms)
     user_prompt = (
-        f"【岗位信息】{job_info.get('title', '')}\n"
+        f"【岗位名称】{job_info.get('title', '')}\n"
+        f"【岗位JD要点】{job_info.get('jd_digest', '')}\n"
+        f"【专业术语表】{terms_str}\n"
         f"【原问题】{question_text}\n"
         f"【追问指引】{followup_hint or '无'}\n"
         f"【候选人回答】{answer_text}\n\n"

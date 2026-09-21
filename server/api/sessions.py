@@ -202,7 +202,7 @@ async def submit_text_answer(
 
     heartbeat_task = asyncio.create_task(_heartbeat_renewal())
 
-    try:
+    async def _execute_business():
         filler_cnt = count_filler_words(req.answer_text)
         current_seq = pending_q["seq"]
         is_followup = pending_q.get("is_followup", False)
@@ -227,15 +227,6 @@ async def submit_text_answer(
             }
             followup_text = await orchestrator.evaluate_followup(
                 current_q_text, req.answer_text, followup_hint, job_info
-            )
-
-        if cancel_event.is_set():
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "ANSWER_IN_PROGRESS",
-                    "message": "答题租约已被后续请求接管",
-                },
             )
 
         if followup_text:
@@ -276,6 +267,60 @@ async def submit_text_answer(
                 next_q = None
                 next_status = "completed"
 
+        return (
+            next_type,
+            next_q,
+            next_status,
+            report_data,
+            current_seq,
+            current_q_text,
+            is_followup,
+            filler_cnt,
+        )
+
+    biz_task = asyncio.create_task(_execute_business())
+    cancel_task = asyncio.create_task(cancel_event.wait())
+
+    try:
+        done, pending = await asyncio.wait(
+            [biz_task, cancel_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if cancel_task in done:
+            # 失去租约所有权！立即取消业务任务并等待结束
+            biz_task.cancel()
+            try:
+                await biz_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "ANSWER_IN_PROGRESS",
+                    "message": "答题租约已被后续请求接管",
+                },
+            )
+
+        cancel_task.cancel()
+        try:
+            await cancel_task
+        except asyncio.CancelledError:
+            pass
+
+        (
+            next_type,
+            next_q,
+            next_status,
+            report_data,
+            current_seq,
+            current_q_text,
+            is_followup,
+            filler_cnt,
+        ) = biz_task.result()
+
+    except HTTPException:
+        raise
     except ScoringUnavailableError:
         with SessionLocal() as db_clean:
             db_clean.execute(
@@ -303,6 +348,10 @@ async def submit_text_answer(
     finally:
         cancel_event.set()
         heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
     # 事务 3：所有权校验与原子落库
     with SessionLocal() as db:
