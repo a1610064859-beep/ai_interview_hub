@@ -19,7 +19,7 @@ from server.schemas import (
     TextAnswerRequest,
 )
 from server.services.asr import count_filler_words
-from server.services import orchestrator, scoring
+from server.services import orchestrator, scoring, tts
 from server.services.scoring import ScoringUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
 @router.post("", response_model=SessionCreateResponse)
-def create_session(req: SessionCreateRequest):
+async def create_session(req: SessionCreateRequest):
     with SessionLocal() as db:
         job = db.query(Job).filter(Job.id == req.job_id).first()
         if not job:
@@ -63,10 +63,11 @@ def create_session(req: SessionCreateRequest):
                 detail={"code": "JOB_NOT_FOUND", "message": "岗位题库未初始化"},
             )
 
-        q1 = questions[0]
+        q1_text = questions[0].text
+        question_texts = [q.text for q in questions[:6]]
         pending_q = {
             "seq": 1,
-            "text": q1.text,
+            "text": q1_text,
             "audio_url": None,
             "is_followup": False,
         }
@@ -84,11 +85,32 @@ def create_session(req: SessionCreateRequest):
         db.add(session)
         db.commit()
         db.refresh(session)
+        sid = session.id
 
-        return SessionCreateResponse(
-            sid=session.id,
-            question=QuestionResponse(text=q1.text, audio_url=None, seq=1),
-        )
+    # 在会话创建后并行预取固定题和过渡语音频
+    prefetch_results, transition_urls = await asyncio.gather(
+        tts.prefetch_session_questions(sid, question_texts),
+        tts.prefetch_session_transitions(sid),
+    )
+    q1_audio_url = prefetch_results.get(1) if isinstance(prefetch_results, dict) else None
+
+    # 若首题预取成功，更新持久化待答状态中的 audio_url
+    if q1_audio_url:
+        with SessionLocal() as db_update:
+            sess_obj = db_update.query(Session).filter(Session.id == sid).first()
+            if sess_obj and sess_obj.pending_question_json:
+                pending_updated = dict(sess_obj.pending_question_json)
+                pending_updated["audio_url"] = q1_audio_url
+                sess_obj.pending_question_json = pending_updated
+                db_update.commit()
+
+    valid_trans_urls = [u for u in transition_urls if u is not None] if isinstance(transition_urls, list) else []
+
+    return SessionCreateResponse(
+        sid=sid,
+        question=QuestionResponse(text=q1_text, audio_url=q1_audio_url, seq=1),
+        transition_audio_urls=valid_trans_urls,
+    )
 
 
 @router.post("/{sid}/answers/text", response_model=AnswerResponse)
@@ -173,6 +195,9 @@ async def submit_text_answer(
             .order_by(Answer.id.asc())
             .all()
         )
+        answer_count_before = len(current_answers)
+
+    transition_audio_url = tts.get_session_transition_url(sid, answer_count_before)
 
     # 阶段 2：业务执行（带心跳续租与所有权即时中止）
     cancel_event = asyncio.Event()
@@ -230,11 +255,12 @@ async def submit_text_answer(
             )
 
         if followup_text:
+            followup_audio = await tts.synthesize_followup(sid, current_seq, followup_text)
             next_type = "followup"
             next_q = {
                 "seq": current_seq,
                 "text": followup_text,
-                "audio_url": None,
+                "audio_url": followup_audio,
                 "is_followup": True,
             }
             next_status = "active"
@@ -242,11 +268,12 @@ async def submit_text_answer(
         else:
             if current_seq < 6:
                 next_main_q = questions[current_seq]
+                next_main_audio = tts.get_question_audio_url(sid, current_seq + 1, is_followup=False)
                 next_type = "next"
                 next_q = {
                     "seq": current_seq + 1,
                     "text": next_main_q.text,
-                    "audio_url": None,
+                    "audio_url": next_main_audio,
                     "is_followup": False,
                 }
                 next_status = "active"
@@ -406,8 +433,35 @@ async def submit_text_answer(
             db.refresh(new_report)
 
     if next_type == "followup":
-        return FollowupAnswerResponse(question=QuestionResponse(**next_q))
+        return FollowupAnswerResponse(
+            question=QuestionResponse(**next_q),
+            transition_audio_url=transition_audio_url,
+        )
     elif next_type == "next":
-        return NextAnswerResponse(question=QuestionResponse(**next_q))
+        return NextAnswerResponse(
+            question=QuestionResponse(**next_q),
+            transition_audio_url=transition_audio_url,
+        )
     else:
-        return DoneAnswerResponse(report_id=new_report.id)
+        return DoneAnswerResponse(
+            report_id=new_report.id,
+            transition_audio_url=transition_audio_url,
+        )
+
+
+@router.get("/{sid}/transition")
+def get_session_transition(
+    sid: int = Path(..., ge=1),
+    answer_idx: int = 0,
+):
+    with SessionLocal() as db:
+        session = db.query(Session).filter(Session.id == sid).first()
+        if not session:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "SESSION_NOT_FOUND", "message": "会话不存在"},
+            )
+        ans_count = db.query(Answer).filter(Answer.session_id == sid).count()
+    idx = answer_idx if answer_idx > 0 else ans_count
+    url = tts.get_session_transition_url(sid, idx)
+    return {"transition_audio_url": url}

@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     flagship_model: str | None = Field(None, validation_alias=AliasChoices("LLM_FLAGSHIP_MODEL", "FLAGSHIP_MODEL", "flagship_model"))
     lease_duration_seconds: int = Field(30, validation_alias=AliasChoices("LEASE_DURATION_SECONDS", "lease_duration_seconds"))
     lease_renew_interval_seconds: int = Field(10, validation_alias=AliasChoices("LEASE_RENEW_INTERVAL_SECONDS", "lease_renew_interval_seconds"))
+    tts_enabled: bool = Field(True, validation_alias=AliasChoices("TTS_ENABLED", "tts_enabled"))
+    tts_voice: str = Field("zh-CN-XiaoxiaoNeural", validation_alias=AliasChoices("TTS_VOICE", "tts_voice"))
+    tts_output_dir: str = Field("data/audio", validation_alias=AliasChoices("TTS_OUTPUT_DIR", "tts_output_dir"))
+    tts_transition_lines: str = Field("嗯，我了解了|请继续|谢谢你的回答", validation_alias=AliasChoices("TTS_TRANSITION_LINES", "tts_transition_lines"))
+    tts_timeout_s: float = Field(30.0, validation_alias=AliasChoices("TTS_TIMEOUT_S", "tts_timeout_s"))
+
+    @property
+    def transition_lines_list(self) -> list[str]:
+        if not self.tts_transition_lines:
+            return []
+        return [line.strip() for line in self.tts_transition_lines.split("|") if line.strip()]
 
     @property
     def orchestration_timeout_s(self) -> float:
