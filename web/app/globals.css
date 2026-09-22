@@ -14,13 +14,54 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(1000px 480px at 0% -10%, rgba(37, 99, 235, 0.35), transparent 60%),
-    radial-gradient(800px 420px at 100% 0%, rgba(255, 138, 42, 0.16), transparent 55%),
-    #070b14;
+    radial-gradient(1000px 480px at 0% -10%, rgba(6, 182, 212, 0.22), transparent 60%),
+    radial-gradient(800px 420px at 100% 0%, rgba(249, 115, 22, 0.14), transparent 55%),
+    #080c14;
   color: #d7e6ff;
 }
 
 .break-anywhere {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.cabin-shell {
+  background-image:
+    linear-gradient(rgba(8, 12, 20, 0.2), rgba(8, 12, 20, 0.55)),
+    radial-gradient(circle at 20% 20%, rgba(6, 182, 212, 0.08), transparent 35%);
+}
+
+.cabin-panel {
+  border-radius: 1.25rem;
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(10px);
+}
+
+.cabin-glow {
+  box-shadow: 0 0 24px rgba(6, 182, 212, 0.18);
+}
+
+.cabin-pulse {
+  animation: cabin-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 24px rgba(6, 182, 212, 0.45);
+}
+
+.evidence-chip {
+  border-radius: 0.9rem;
+  border: 1px solid rgba(6, 182, 212, 0.45);
+  background: rgba(8, 47, 73, 0.45);
+  padding: 0.75rem 0.9rem;
+}
+
+@keyframes cabin-pulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
 }
