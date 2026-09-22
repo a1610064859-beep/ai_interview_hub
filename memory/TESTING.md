@@ -265,7 +265,8 @@
 | --- | --- |
 | tests/test_growth.py | 见本票门禁 |
 | 创建会话必填 user_id+mode | 旧请求体 422 |
-| 首答原子写 input_mode；混用 409 | 文本/语音端点 |
+| 首答原子写 input_mode；混用 409 | text->voice 与 voice->text 双向 |
+| 同步 main 6f2facb（ASR CJK） | merge-base=6f2facb；保留双方 audio 测试 |
 | scoring_version 新报告保持 NULL | P8；测试用 fixture |
 | sid=5 | 不改写 |
 

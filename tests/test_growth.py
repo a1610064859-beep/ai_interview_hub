@@ -498,6 +498,71 @@ def test_input_mode_mismatch_409():
         assert sess.lease_token is None
 
 
+def test_input_mode_mismatch_voice_then_text(monkeypatch):
+    """反向混用：voice 首答成功后再调 text → 409，不落答、不推进、租约释放。"""
+    from io import BytesIO
+
+    from server.services import asr as asr_module
+    from server.services import audio as audio_module
+    from server.services import orchestrator as orch_module
+
+    monkeypatch.setattr(settings, "asr_enabled", True)
+    monkeypatch.setattr(audio_module, "validate_upload", lambda _b: None)
+    monkeypatch.setattr(audio_module, "probe_webm", lambda _p: None)
+
+    def _fake_transcode(_webm, wav_path):
+        with open(wav_path, "wb") as f:
+            f.write(b"RIFF-fake-wav")
+
+    monkeypatch.setattr(audio_module, "transcode_to_16k_wav", _fake_transcode)
+
+    async def _fake_asr(_path):
+        return "语音首答锁定 voice 模式"
+
+    monkeypatch.setattr(asr_module, "transcribe_wav", _fake_asr)
+    monkeypatch.setattr(orch_module, "evaluate_followup", AsyncMock(return_value=None))
+
+    client = TestClient(app)
+    create = client.post(
+        "/api/sessions",
+        json={"job_id": 1, "user_id": 3, "mode": "毕业生"},
+    )
+    assert create.status_code == 200
+    sid = create.json()["sid"]
+
+    voice = client.post(
+        f"/api/sessions/{sid}/answers",
+        files={"audio": ("a.webm", BytesIO(b"\x1a\x45\xdf\xa3fake"), "audio/webm")},
+        data={"duration_s": "1.5", "pause_cnt": "0"},
+    )
+    assert voice.status_code == 200, voice.text
+    assert voice.json()["type"] in ("followup", "next")
+
+    with SessionLocal() as db:
+        sess = db.query(Session).filter(Session.id == sid).one()
+        assert sess.input_mode == "voice"
+        before_answers = db.query(Answer).filter(Answer.session_id == sid).count()
+        before_pending = dict(sess.pending_question_json)
+        before_status = sess.status
+        assert before_answers == 1
+        assert sess.lease_token is None
+
+    text = client.post(
+        f"/api/sessions/{sid}/answers/text",
+        json={"answer_text": "试图改用文本作答，应被拒绝。"},
+    )
+    assert text.status_code == 409
+    assert text.json()["detail"]["code"] == "INPUT_MODE_MISMATCH"
+
+    with SessionLocal() as db:
+        sess = db.query(Session).filter(Session.id == sid).one()
+        assert sess.input_mode == "voice"
+        assert db.query(Answer).filter(Answer.session_id == sid).count() == before_answers
+        assert sess.pending_question_json == before_pending
+        assert sess.status == before_status
+        assert sess.lease_token is None
+
+
 def test_only_completed_with_report_in_history():
     client = TestClient(app)
     with SessionLocal() as db:
