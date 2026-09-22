@@ -196,16 +196,34 @@
    - 结束 `18082` 进程 → `18082=NO_LISTENER`
    - 主机外网探针 `https://www.baidu.com` → `NET_RESTORE=ok status=200`
 
-### 真人麦克风完整 6 题——[未验证]
+### 真人麦克风语音与声学验收（sid=5）——后端链路通过 / 前端闭环未通过
 
-阻断原因：本阶段必须真人自然口语 + 浏览器 MediaRecorder，禁止 SAPI / fake capture 冒充。Agent 无法代替真人说话。
+说明：真人自然口语 + 浏览器 MediaRecorder；**禁止再向 sid=5 提交**。本场可作真人语音与声学量化证据；因最终提交前端 500 未自动跳转报告页，**不能替代完整流程验收**，**M2 暂不关闭**。
 
-已就绪（待人工）：
-- FastAPI `127.0.0.1:18080`（real，ASR/TTS 开）
-- Next `http://127.0.0.1:34725`（`NEXT_PUBLIC_API_MODE=real` 已重建）
-- 抽检创建会话 sid=2：`audio_url=/audio/session_2_q1.mp3`，过渡语 URL 非空
+1. **流程观测**
+   - 岗位：智驾测试；全程语音（12 条：6 主问 + 6 追问，均有 `duration_s/wpm/pause_cnt/filler_cnt`）
+   - 服务：FastAPI `:18080` + Next `:34725`（real）
+   - 最终追问提交：前端显示 `语音提交失败（HTTP 500）。未推进题目。未自动重试。`
+   - Next 原文：`Failed to proxy http://127.0.0.1:18080/api/sessions/5/answers [Error: socket hang up] { code: 'ECONNRESET' }`
+   - 后端随后完成：`status=completed`，`POST .../answers` 最终 200；中间有一次 409（租约占用下的重试）
+2. **报告核验（人工 + API）**
+   - `GET /api/reports/5` → **HTTP 200**
+   - 报告 `#2`，session `#5`，overall **91.3**
+   - `expression_fluency.score=91.3`；reason 含语速 **177** 字/分、停顿 **2.5** 次/分、填充词 **2.3** 个/分、**12** 条有效语音回答
+   - `professional_match` / `logic_structure` / `job_competence`：score=null，reason=「未获得通过校验的双次评分」（缺维不补零，契约允许）
+   - `/reports/5` 页面 HTTP 200 可访问；**系手动打开**，非提交成功后的自动跳转
+3. **结论**
+   - 真人语音后端链路 + 声学量化：**通过**（可作证据）
+   - 用户视角闭环（最终提交 → 自动进报告页）：**未通过**
+   - **M2 暂不关闭**；修复反代超时后须再跑一场，要求最终提交自动跳转 `/reports/{sid}`；内容三维至少 1 项通过双评
 
-人工步骤（完成后回报 sid）：选岗 → 3s 自检回放确认 → 自然口语 6 主问+追问 → 跳转 `/reports/{sid}` → 核验 `expression_fluency.score` 非 null 与 evidence。
+### 登记缺陷
+
+| ID | 级别 | 描述 |
+| --- | --- | --- |
+| R1 | 黄（历史） | edge-tts 实网 403；本轮探针已恢复合成，保留观察 |
+| **阻断** | 红 | 最终评分耗时超过 Next→后端反代连接寿命，前端 `ECONNRESET`/HTTP 500，且未查询会话状态或进入报告页 |
+| **R2** | 黄 | 内容三维全部缺失；契约允许，但报告仅剩流畅度，展示与评分质量不足。不降低证据校验标准；另开评分诊断票 |
 
 ### edge-tts / 降级
 
@@ -215,12 +233,12 @@
 - H 断网轮次主动 `TTS_ENABLED=false`，验证 `audio_url=null` 时文本题目仍可推进（200 + followup/next）
 - 未更换 TTS 服务商、未增依赖、未改 `tts.py`
 
-### 端口与进程（截至本段记录时）
+### 端口与进程（证据落盘后清理）
 
 | 端口 | 用途 | 状态 |
 | --- | --- | --- |
 | 18082 | H 离线 uvicorn | 已清理 NO_LISTENER |
-| 18080 | real FastAPI | **仍监听**（待真人终验） |
-| 34725 | Next real | **仍监听**（待真人终验） |
+| 18080 | real FastAPI | 证据保存后清理 → NO_LISTENER |
+| 34725 | Next real | 证据保存后清理 → NO_LISTENER |
 
-**M2 状态：未完成**（H 通过；真人完整 6 题仍为 [未验证]）。
+**M2 状态：未完成**（H 通过；真人语音/声学后端通过；前端最终跳转闭环未通过；内容维 R2 黄）。
