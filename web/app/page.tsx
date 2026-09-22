@@ -11,6 +11,9 @@ import {
   type SessionCreateData,
   type AnswerData,
   pickTransitionAudioUrl,
+  ActionLock,
+  TransitionAudioTracker,
+  QuestionAudioPlayer,
 } from "../lib/recorder";
 
 const TOTAL_QUESTIONS = 6;
@@ -99,7 +102,7 @@ export default function HomePage() {
   const [elapsed, setElapsed] = useState(0);
   const [voiceMeta, setVoiceMeta] = useState<string | null>(null);
   const voiceSubmitLockRef = useRef(false);
-  const playedTransitionRef = useRef<string | null>(null);
+  const transitionTrackerRef = useRef(new TransitionAudioTracker());
 
   useEffect(() => {
     const mode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
@@ -153,10 +156,10 @@ export default function HomePage() {
     setElapsed(0);
     setHold(false);
     setNotice(null);
-    playedTransitionRef.current = null;
+    transitionTrackerRef.current.reset();
     voiceSubmitLockRef.current = false;
     submitLock.current = false;
-    createLock.current = false;
+    // 注意：resetSessionState 绝不得修改 createLock！只能在失败路径释放（AGENTS 审查项 1）
   }
 
   async function choose(mode: ApiMode, job: Job) {
@@ -201,6 +204,7 @@ export default function HomePage() {
 
     const [result] = await Promise.all([requestRealSession(job.id), transition]);
     if (result.kind === "network") {
+      createLock.current = false; // 失败路径释放锁，允许重新选岗或重试
       setView({
         phase: "error",
         message: "网络失败，无法确认会话是否已创建。未自动重试。请刷新页面后再试。",
@@ -208,6 +212,7 @@ export default function HomePage() {
       return;
     }
     if (result.kind === "http") {
+      createLock.current = false; // 失败路径释放锁
       setView({
         phase: "error",
         message: formatApiError(result, "创建会话失败", "未进入面试，未自动重试。请刷新页面后再试。"),
@@ -215,6 +220,7 @@ export default function HomePage() {
       return;
     }
     if (result.kind === "invalid") {
+      createLock.current = false; // 失败路径释放锁
       setView({ phase: "error", message: result.message });
       return;
     }
@@ -237,8 +243,8 @@ export default function HomePage() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function playTransitionAudio(urls: string[], index: number) {
-    const url = pickTransitionAudioUrl(urls, index);
+  function playTransitionAudio(urls: string[], answerCount: number) {
+    const url = transitionTrackerRef.current.onSubmissionPlay(urls, answerCount);
     if (!url) {
       return;
     }
@@ -302,8 +308,8 @@ export default function HomePage() {
     }
     recorderRef.current = null;
     setVoiceMeta(`本次录音：时长 ${recording.durationS} 秒 · 停顿 ${recording.pauseCnt} 次`);
-    // 提交回答后立即播放预生成通用过渡语，掩盖 ASR 与大模型 3-5 秒处理时延（AGENTS §6.2）
-    playTransitionAudio(view.transitionAudioUrls, view.question.seq - 1);
+    // 提交回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖 ASR 与大模型时延（AGENTS §6.2）
+    playTransitionAudio(view.transitionAudioUrls, answerLog.length);
     await submitAudioAnswer(view, recording);
   }
 
@@ -432,8 +438,8 @@ export default function HomePage() {
 
     const seq = view.question.seq;
     const wasFollowup = view.isFollowup;
-    // 提交文本回答后立即播放预生成通用过渡语，掩盖大模型 3-5 秒处理时延（AGENTS §6.2）
-    playTransitionAudio(view.transitionAudioUrls, view.question.seq - 1);
+    // 提交文本回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖大模型时延（AGENTS §6.2）
+    playTransitionAudio(view.transitionAudioUrls, answerLog.length);
     const result = await requestTextAnswer(view.sid, normalized);
     if (result.kind === "network") {
       setBusy(false);
@@ -507,18 +513,17 @@ export default function HomePage() {
     setBusy(false);
   }
 
-  // 过渡语自动播放：仅播一次；任何失败静默降级，绝不阻断录音与题目推进（T6 审查建议项）
+  // 过渡语自动播放（响应返回兜底）：若提交时已立即播放，TransitionAudioTracker 严格拒绝二次重复播放（AGENTS 审查项 3）
   useEffect(() => {
     if (view.phase !== "interview" || view.mode !== "real") {
       return;
     }
-    const url = view.transitionAudioUrl;
-    if (!url || playedTransitionRef.current === url) {
+    const urlToPlay = transitionTrackerRef.current.shouldPlayOnResponse(view.transitionAudioUrl);
+    if (!urlToPlay) {
       return;
     }
-    playedTransitionRef.current = url;
     try {
-      new Audio(url).play().catch(() => undefined);
+      new Audio(urlToPlay).play().catch(() => undefined);
     } catch {
       // 静默降级
     }
@@ -664,6 +669,8 @@ function DeviceCheckPanel({
   const recorderRef = useRef<VoiceRecorder | null>(null);
   const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const playbackUrlRef = useRef<string | null>(null);
+  const beginLockRef = useRef(false);
+  const passLockRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -680,6 +687,10 @@ function DeviceCheckPanel({
   }, []);
 
   async function begin() {
+    if (beginLockRef.current || status === "recording") {
+      return;
+    }
+    beginLockRef.current = true;
     setStatus("recording");
     setMessage(null);
     try {
@@ -690,6 +701,7 @@ function DeviceCheckPanel({
         void finishRecording();
       }, SELF_CHECK_SECONDS * 1000);
     } catch (error) {
+      beginLockRef.current = false; // 失败释放锁
       setStatus("idle");
       setMessage(`${formatMicError(error)} 自检未通过，可重试。`);
     }
@@ -698,10 +710,12 @@ function DeviceCheckPanel({
   async function finishRecording() {
     const rec = recorderRef.current;
     if (!rec) {
+      beginLockRef.current = false;
       return;
     }
     const recording = await rec.stop();
     recorderRef.current = null;
+    beginLockRef.current = false; // 录制完成释放
     if (recording.blob.size === 0) {
       setStatus("idle");
       setMessage("自检录音为空，请重试。");
@@ -724,8 +738,18 @@ function DeviceCheckPanel({
       URL.revokeObjectURL(playbackUrlRef.current);
       playbackUrlRef.current = null;
     }
+    beginLockRef.current = false;
+    passLockRef.current = false;
     setStatus("idle");
     setMessage(null);
+  }
+
+  function handlePass() {
+    if (passLockRef.current) {
+      return;
+    }
+    passLockRef.current = true;
+    onPass();
   }
 
   return (
@@ -748,7 +772,8 @@ function DeviceCheckPanel({
         {status === "idle" ? (
           <button
             type="button"
-            className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04]"
+            className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={beginLockRef.current}
             onClick={() => {
               void begin();
             }}
@@ -785,8 +810,9 @@ function DeviceCheckPanel({
             </button>
             <button
               type="button"
-              className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04]"
-              onClick={onPass}
+              className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={passLockRef.current}
+              onClick={handlePass}
             >
               自检通过，进入面试舱
             </button>
@@ -859,6 +885,23 @@ function InterviewPanel({
   const trimmedLen = answerText.trim().length;
   const [isTyping, setIsTyping] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const questionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const questionAudioTrackerRef = useRef(new QuestionAudioPlayer());
+
+  // 每道新题出现时尝试自动播放一次；若被浏览器 autoplay 策略阻止则静默忽略，保留 controls 供手动点击（AGENTS §6.2 审查项 5）
+  useEffect(() => {
+    if (
+      questionAudioTrackerRef.current.shouldAutoplay(
+        question.seq,
+        isFollowup,
+        question.audioUrl,
+      )
+    ) {
+      questionAudioRef.current?.play().catch(() => {
+        // 浏览器 autoplay 限制静默降级，不阻断答题流程
+      });
+    }
+  }, [question.seq, question.audioUrl, isFollowup]);
 
   return (
     <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
@@ -888,10 +931,11 @@ function InterviewPanel({
           <QuestionSubtitle text={question.text} onTypingChange={setIsTyping} />
           {question.audioUrl !== null ? (
             <audio
+              ref={questionAudioRef}
               className="mt-4 max-w-full"
               controls
               src={question.audioUrl}
-              preload="none"
+              preload="auto"
               onPlay={() => setIsPlayingAudio(true)}
               onEnded={() => setIsPlayingAudio(false)}
               onPause={() => setIsPlayingAudio(false)}

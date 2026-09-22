@@ -324,3 +324,119 @@ export function pickTransitionAudioUrl(urls: string[], index: number): string | 
   const picked = urls[positiveIndex % urls.length];
   return typeof picked === "string" && picked.trim().length > 0 ? picked.trim() : null;
 }
+
+/**
+ * 同步互斥动作锁：防止快速双击与并发操作，提供严格的获取与释放语义。
+ */
+export class ActionLock {
+  private locked = false;
+
+  /**
+   * 尝试获取锁。若已被锁定则返回 false，否则锁定并返回 true。
+   */
+  acquire(): boolean {
+    if (this.locked) {
+      return false;
+    }
+    this.locked = true;
+    return true;
+  }
+
+  /**
+   * 释放锁。
+   */
+  release(): void {
+    this.locked = false;
+  }
+
+  get isLocked(): boolean {
+    return this.locked;
+  }
+}
+
+/**
+ * 过渡语播放控制器与防重追踪器（AGENTS §6.2）。
+ *
+ * 规则：
+ * 1. 提交时按实际回答提交计数（answerCount）在预生成列表里轮转选取；
+ * 2. 主问题与追问提交均累计 answerCount，避免同一 seq 重复选取相同过渡语；
+ * 3. 提交时立即播放并记录 URL；
+ * 4. 服务端响应返回 transition_audio_url 时，若本轮已播放过过渡语，禁止重复播放；
+ * 5. 若提交时列表为空未播放，响应返回时作为兜底播放一次。
+ */
+export class TransitionAudioTracker {
+  private lastPlayedUrl: string | null = null;
+  private playedThisTurn = false;
+
+  /**
+   * 提交回答时立即触发过渡语播放：
+   * 使用提交前的回答计数（answerCount）进行轮转。
+   */
+  onSubmissionPlay(urls: string[], answerCount: number): string | null {
+    const url = pickTransitionAudioUrl(urls, answerCount);
+    if (!url) {
+      return null;
+    }
+    this.lastPlayedUrl = url;
+    this.playedThisTurn = true;
+    return url;
+  }
+
+  /**
+   * 服务端响应返回时判定是否需要兜底播放：
+   * 若提交时已播放（playedThisTurn === true），则清空标志并返回 null（禁止重复播放）；
+   * 若提交时未播放且响应带有新 URL，返回该 URL 并在首次播放后记录。
+   */
+  shouldPlayOnResponse(responseUrl: string | null): string | null {
+    if (this.playedThisTurn) {
+      this.playedThisTurn = false;
+      return null;
+    }
+    if (!responseUrl || responseUrl === this.lastPlayedUrl) {
+      return null;
+    }
+    this.lastPlayedUrl = responseUrl;
+    return responseUrl;
+  }
+
+  get hasPlayedThisTurn(): boolean {
+    return this.playedThisTurn;
+  }
+
+  get lastUrl(): string | null {
+    return this.lastPlayedUrl;
+  }
+
+  reset(): void {
+    this.lastPlayedUrl = null;
+    this.playedThisTurn = false;
+  }
+}
+
+/**
+ * 题目音频自动播放追踪器：
+ * 每道新题（或追问）首次渲染时尝试自动播放一次，相同题目或组件重渲染不重复触发。
+ */
+export class QuestionAudioPlayer {
+  private playedKey: string | null = null;
+
+  shouldAutoplay(seq: number, isFollowup: boolean, audioUrl: string | null): boolean {
+    if (!audioUrl || !audioUrl.trim()) {
+      return false;
+    }
+    const key = `${seq}-${isFollowup ? "f" : "m"}-${audioUrl.trim()}`;
+    if (this.playedKey === key) {
+      return false;
+    }
+    this.playedKey = key;
+    return true;
+  }
+
+  get currentKey(): string | null {
+    return this.playedKey;
+  }
+
+  reset(): void {
+    this.playedKey = null;
+  }
+}

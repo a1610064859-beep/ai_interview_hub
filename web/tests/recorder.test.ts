@@ -207,3 +207,127 @@ describe("pickTransitionAudioUrl（过渡语轮转选择纯函数）", () => {
     assert.equal(pickTransitionAudioUrl(["  ", ""], 0), null);
   });
 });
+
+describe("ActionLock（双击选岗、自检开始与自检通过同步锁）", () => {
+  it("首发获取成功，快速并发第二次获取被拒绝（防双击）", async () => {
+    const { ActionLock } = await import("../lib/recorder.ts");
+    const lock = new ActionLock();
+    assert.equal(lock.acquire(), true);
+    assert.equal(lock.acquire(), false);
+    assert.equal(lock.isLocked, true);
+  });
+
+  it("明确释放后允许再次获取", async () => {
+    const { ActionLock } = await import("../lib/recorder.ts");
+    const lock = new ActionLock();
+    assert.equal(lock.acquire(), true);
+    lock.release();
+    assert.equal(lock.isLocked, false);
+    assert.equal(lock.acquire(), true);
+  });
+
+  it("自检通过锁锁定后拒绝重复触发 enterInterview", async () => {
+    const { ActionLock } = await import("../lib/recorder.ts");
+    const passLock = new ActionLock();
+    let sessionCreateCount = 0;
+    const triggerEnterInterview = () => {
+      if (!passLock.acquire()) {
+        return;
+      }
+      sessionCreateCount += 1;
+    };
+    // 模拟快速连续点击 3 次
+    triggerEnterInterview();
+    triggerEnterInterview();
+    triggerEnterInterview();
+    assert.equal(sessionCreateCount, 1);
+  });
+});
+
+describe("TransitionAudioTracker（过渡语单次播放与主问/追问轮转防重）", () => {
+  const transitions = [
+    "/audio/trans_0.mp3",
+    "/audio/trans_1.mp3",
+    "/audio/trans_2.mp3",
+  ];
+
+  it("提交时立即播放并记录，响应返回时严格拒绝二次重复播放", async () => {
+    const { TransitionAudioTracker } = await import("../lib/recorder.ts");
+    const tracker = new TransitionAudioTracker();
+
+    // 1. 提交第 1 题回答：立即播发
+    const playUrl1 = tracker.onSubmissionPlay(transitions, 0);
+    assert.equal(playUrl1, "/audio/trans_0.mp3");
+    assert.equal(tracker.hasPlayedThisTurn, true);
+
+    // 2. 服务端响应返回带有 transition_audio_url：拒绝二次播放
+    const responsePlay1 = tracker.shouldPlayOnResponse("/audio/trans_0.mp3");
+    assert.equal(responsePlay1, null);
+    assert.equal(tracker.hasPlayedThisTurn, false);
+
+    // 3. 再次重复渲染：依然不播放
+    const repeatRenderPlay = tracker.shouldPlayOnResponse("/audio/trans_0.mp3");
+    assert.equal(repeatRenderPlay, null);
+  });
+
+  it("主问题与追问使用 answerCount 轮转，避免相同 seq 重复播放同一音频", async () => {
+    const { TransitionAudioTracker } = await import("../lib/recorder.ts");
+    const tracker = new TransitionAudioTracker();
+
+    // 回答 Q1 主问题（此时 answerCount = 0）
+    const q1Audio = tracker.onSubmissionPlay(transitions, 0);
+    assert.equal(q1Audio, "/audio/trans_0.mp3");
+    tracker.shouldPlayOnResponse("/audio/trans_0.mp3"); // 消费响应
+
+    // 回答 Q1 追问（此时 seq 依然为 1，但已提交 1 次回答，answerCount = 1）
+    const q1FollowupAudio = tracker.onSubmissionPlay(transitions, 1);
+    assert.equal(q1FollowupAudio, "/audio/trans_1.mp3");
+    assert.notEqual(q1FollowupAudio, q1Audio); // 严格不同！
+    tracker.shouldPlayOnResponse("/audio/trans_1.mp3");
+
+    // 回答 Q2 主问题（此时 answerCount = 2）
+    const q2Audio = tracker.onSubmissionPlay(transitions, 2);
+    assert.equal(q2Audio, "/audio/trans_2.mp3");
+  });
+
+  it("提交时无预生成列表时，响应返回允许兜底播放一次", async () => {
+    const { TransitionAudioTracker } = await import("../lib/recorder.ts");
+    const tracker = new TransitionAudioTracker();
+
+    // 提交时列表为空（未能立即播放）
+    const playUrl = tracker.onSubmissionPlay([], 0);
+    assert.equal(playUrl, null);
+    assert.equal(tracker.hasPlayedThisTurn, false);
+
+    // 响应返回了兜底音频：允许播放一次
+    const responsePlay = tracker.shouldPlayOnResponse("/audio/trans_fallback.mp3");
+    assert.equal(responsePlay, "/audio/trans_fallback.mp3");
+
+    // 随后的重渲染不得再次播放
+    assert.equal(tracker.shouldPlayOnResponse("/audio/trans_fallback.mp3"), null);
+  });
+});
+
+describe("QuestionAudioPlayer（固定题音频每道新题仅自动播放一次）", () => {
+  it("新题首次加载尝试自动播放一次，重渲染不重复触发", async () => {
+    const { QuestionAudioPlayer } = await import("../lib/recorder.ts");
+    const player = new QuestionAudioPlayer();
+
+    // 第 1 题初次加载
+    assert.equal(player.shouldAutoplay(1, false, "/audio/q1.mp3"), true);
+    // 第 1 题页面重新渲染（如录音电平变化）
+    assert.equal(player.shouldAutoplay(1, false, "/audio/q1.mp3"), false);
+
+    // 推进到第 1 题追问（同一 seq，但 isFollowup 为 true）
+    assert.equal(player.shouldAutoplay(1, true, "/audio/q1_followup.mp3"), true);
+    assert.equal(player.shouldAutoplay(1, true, "/audio/q1_followup.mp3"), false);
+
+    // 推进到第 2 题
+    assert.equal(player.shouldAutoplay(2, false, "/audio/q2.mp3"), true);
+    assert.equal(player.shouldAutoplay(2, false, "/audio/q2.mp3"), false);
+
+    // 音频 URL 为空时不自动播放
+    assert.equal(player.shouldAutoplay(3, false, null), false);
+    assert.equal(player.shouldAutoplay(3, false, ""), false);
+  });
+});
