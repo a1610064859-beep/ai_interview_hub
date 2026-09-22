@@ -160,3 +160,67 @@
    - **转写结果**：`'我 们 使 用 canoe 进 行 智 能 汽 车 总 线 通 信 测 试 和 故 障 注 入'`
    - **首加载+转写耗时**：24.37 秒，RTF=0.242
    - **结论**：**H 严格断网验收通过**，无任何外网依赖，模型完全依赖本地缓存离线运行。
+
+## [M2-FINAL] 语音闭环终验（2026-09-22）
+
+范围：关闭 M2 剩余两项——H 严格断网（含 HTTP 答题端点）与真人麦克风完整 6 题；默认不改生产代码。分支 `feature/M2-final-acceptance`（基于 `main`）。
+
+### H 严格断网（HTTP 端到端补强）——通过
+
+说明：在既有库级 H 证据之外，本轮用可恢复 socket 护栏 + 离线环境变量，对 `POST /api/sessions/{sid}/answers` 做端到端验收。隔离库 `E:\ai_hub_cache\m2_final_h\h_accept.db`（不改写验收判据所需的主库题库语义；主库另有并发干扰故改用隔离库落证）。证据文件未合入仓库。
+
+1. **缓存与工具**
+   - 模型缓存存在：`E:\ai_models\funasr\...\model.pt`
+   - 现有 `.venv`；未重新下载模型、未安装依赖
+   - 样本：SAPI 中文 → ffmpeg WebM/Opus（`h_zh.webm`，61557 bytes）；ffprobe：`codec_name=opus channels=1`（容器 48kHz，服务端再转 16k）
+2. **断网手段（可恢复）**
+   - 进程内拦截非 loopback `socket.create_connection` / `socket.connect` → `OSError(10051,[H断网拦截])`
+   - 允许 `127.0.0.1` / `::1` / `localhost`（不破坏本机前后端与本机 Ollama）
+   - `MODELSCOPE_OFFLINE=1`、`HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1`、`TTS_ENABLED=false`
+   - 外呼探针：`1.1.1.1:443` → blocked
+3. **HTTP 链路**
+   - uvicorn `127.0.0.1:18082` + 上述护栏
+   - `POST /api/sessions` → sid=1，`audio_url=null`（本轮关闭 TTS）
+   - 主答 WebM：`HTTP 200`，`type=followup`，seq=1（约 31.4s，含冷加载）
+   - 追问 WebM：`HTTP 200`，`type=next`，seq=2（约 0.73s）→ **followup→next**
+4. **ASR / 落库**
+
+| id | q_seq | is_followup | duration_s | wpm | pause_cnt | filler_cnt | answer_text（节选） |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 0 | 10.3 | 139.8 | 1 | 0 | 我们使用co e进行智能汽车总线通信测试和故障注入 |
+| 2 | 1 | 1 | 10.3 | 139.8 | 0 | 0 | 同上（CJK 非空） |
+
+   - FunASR 日志加载本地 `E:\ai_models\funasr\...\model.pt`，`All keys matched successfully`
+   - ModelScope 仍打印 “Downloading 13 files”，但在护栏下约 1s 完成，随后只读本地 ckpt；云端 LLM 在护栏下重试失败后静默降级（符合追问失败→下一题）
+5. **恢复**
+   - 结束 `18082` 进程 → `18082=NO_LISTENER`
+   - 主机外网探针 `https://www.baidu.com` → `NET_RESTORE=ok status=200`
+
+### 真人麦克风完整 6 题——[未验证]
+
+阻断原因：本阶段必须真人自然口语 + 浏览器 MediaRecorder，禁止 SAPI / fake capture 冒充。Agent 无法代替真人说话。
+
+已就绪（待人工）：
+- FastAPI `127.0.0.1:18080`（real，ASR/TTS 开）
+- Next `http://127.0.0.1:34725`（`NEXT_PUBLIC_API_MODE=real` 已重建）
+- 抽检创建会话 sid=2：`audio_url=/audio/session_2_q1.mp3`，过渡语 URL 非空
+
+人工步骤（完成后回报 sid）：选岗 → 3s 自检回放确认 → 自然口语 6 主问+追问 → 跳转 `/reports/{sid}` → 核验 `expression_fluency.score` 非 null 与 evidence。
+
+### edge-tts / 降级
+
+- 历史风险 R1 黄（实网 403）本轮**未复现**
+- `synthesize_to_file` 探针：`TTS_SAVE_OK True`，mp3 约 19008 bytes
+- 实网创建会话返回非空 `audio_url` / `transition_audio_urls`
+- H 断网轮次主动 `TTS_ENABLED=false`，验证 `audio_url=null` 时文本题目仍可推进（200 + followup/next）
+- 未更换 TTS 服务商、未增依赖、未改 `tts.py`
+
+### 端口与进程（截至本段记录时）
+
+| 端口 | 用途 | 状态 |
+| --- | --- | --- |
+| 18082 | H 离线 uvicorn | 已清理 NO_LISTENER |
+| 18080 | real FastAPI | **仍监听**（待真人终验） |
+| 34725 | Next real | **仍监听**（待真人终验） |
+
+**M2 状态：未完成**（H 通过；真人完整 6 题仍为 [未验证]）。
