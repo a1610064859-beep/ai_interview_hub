@@ -184,18 +184,25 @@ export default function HomePage() {
       return;
     }
     if (result.kind === "http") {
-      submitLock.current = false;
-      setBusy(false);
       const code = result.code ?? "";
-      if (code === "SCORING_UNAVAILABLE") {
+      if (code === "ANSWER_IN_PROGRESS") {
+        // 后端可能仍在处理或已被接管；结果未知，禁止再次提交。
+        setBusy(false);
+        setHold(true);
         setNotice(
-          formatApiError(result, "提交失败", "已保留当前输入，可人工重试。未自动重发。"),
+          formatApiError(
+            result,
+            "提交失败",
+            "已保留当前输入。结果不明，请刷新确认后再试。未自动重发。",
+          ),
         );
         return;
       }
-      if (code === "ANSWER_IN_PROGRESS") {
+      submitLock.current = false;
+      setBusy(false);
+      if (code === "SCORING_UNAVAILABLE") {
         setNotice(
-          formatApiError(result, "提交失败", "已保留当前输入，请勿重复提交。未自动重发。"),
+          formatApiError(result, "提交失败", "已保留当前输入，可人工重试。未自动重发。"),
         );
         return;
       }
@@ -203,9 +210,10 @@ export default function HomePage() {
       return;
     }
     if (result.kind === "invalid") {
-      submitLock.current = false;
+      // HTTP 200 但无法解析时，后端很可能已推进；锁页禁止重复提交。
       setBusy(false);
-      setNotice(result.message);
+      setHold(true);
+      setNotice(`${result.message} 结果不明，请刷新确认后再试。未自动重发。`);
       return;
     }
 
