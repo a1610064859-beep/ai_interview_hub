@@ -7,6 +7,7 @@
 | 基线 | main `fdd74a1`（= T5-P0 `1788674` 合入后的 main；main 同期已通过验收合入 T4 TTS 预取 `757a62f`） |
 | 前置输入 | `docs/asr-preflight.md`（T5-P0 实测：ffmpeg 8.1 就绪；系统 Python 3.11.9 可用；funasr/torch 全缺；RTX 3070 Ti 8GB；C 盘余 14G） |
 | 状态 | **待队长审批**。§5 API 细则、§1 依赖、§4 配置键、§6 文件边界均"批准后才可施工" |
+| 修订记录 | v1=`d677712` 初稿；v2=按 Astra 审查修订：①输入内容损坏（含截断/内部损坏）统一 422 AUDIO_INVALID，503 仅限环境缺失败；②删除 ASR_DISABLED，关闭 ASR 统一 503 ASR_UNAVAILABLE；③ASR_MODEL_NAME/ASR_MODEL_CACHE_DIR 改必填无默认；④ASR_PROVIDER 锁定 funasr，讯飞登记为后续缺口；⑤Dockerfile 改列待批扩界；⑥删除 prepare_asr_model.py 申请；⑦CUDA 失败自动回退 CPU 定稿；⑧验收 F 更名"并发重复请求不重复推进" |
 
 **标记约定**：`[已验证]`=官方包元数据/官方索引/本机实测取证；`[未验证]`=未实测、禁止据此宣称；`[待批]`=本规格申请、队长批准前不得实施。
 
@@ -63,7 +64,7 @@ python-multipart==0.0.32
 | M2 演示风险 | 单题短音频转写延迟低（亚秒~秒级 [未验证]），演示节奏好；风险=CUDA/driver 异常路径 | 实现最简、故障面最小；风险=RTF 未测，若单题转写 >3–5s 会拖慢演示节奏 [未验证] |
 | 切换成本 | — | A 失败时改 2 行 requirements 重装（§1.1），业务代码零改动（设备由 `ASR_DEVICE` 配置） |
 
-**明确推荐：A（GPU）**。理由：目标硬件已验证在位（RTX 3070 Ti + 驱动 610.88 + 8GB 显存），评分/JD 已按"质量优先允许慢"走云端，语音链路的本地延迟是演示体验关键；B 保留为文档化降级路径——切换只改 requirements 两行 + `ASR_DEVICE=cpu`，不触发任何代码变更。**若队长选择 B，T5 施工照常，仅依赖块换为 B 版。**
+**明确推荐：A（GPU）**。理由：目标硬件已验证在位（RTX 3070 Ti + 驱动 610.88 + 8GB 显存），评分/JD 已按"质量优先允许慢"走云端，语音链路的本地延迟是演示体验关键。**CUDA 失败行为定稿：`ASR_DEVICE=cuda` 时若 CUDA 初始化失败，自动回退 CPU 推理并记录 WARN 日志；CPU 也失败才返回 503 `ASR_UNAVAILABLE`。** B 保留为文档化降级路径——切换只改 requirements 两行 + `ASR_DEVICE=cpu`，不触发任何代码变更。**若队长选择 B，T5 施工照常，仅依赖块换为 B 版；两种方案的运行兼容性均须安装后以真实模型验收（§7-B），当前不宣称已验证。**
 
 ---
 
@@ -109,11 +110,11 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 
 | 键 | 类型 | 默认值 | 敏感性 | 说明 |
 | --- | --- | --- | --- | --- |
-| `ASR_ENABLED` | bool | `true` | 公开 | 关闭时语音端点返回 503 ASR_DISABLED（mock 期兜底） |
-| `ASR_PROVIDER` | str | `funasr` | 公开 | 预留 `xfyun`；本任务不实现讯飞 |
-| `ASR_MODEL_NAME` | str | `paraformer-zh` | 公开 | funasr 模型别名 |
-| `ASR_DEVICE` | str | `cpu` | 公开 | `cpu\|cuda`；演示机置 `cuda`；cuda 不可用时是否回退 cpu 由 T5 实现并在日志告警 |
-| `ASR_MODEL_CACHE_DIR` | str | `E:\ai_models\funasr` | 公开（本机路径） | AutoModel cache_dir；必须为 E 盘项目外目录 |
+| `ASR_ENABLED` | bool | `true` | 公开 | 关闭时语音端点返回 503 `ASR_UNAVAILABLE`（不新增第五个错误码） |
+| `ASR_PROVIDER` | str | **必填，仅允许 `funasr`** | 公开 | T5 锁定 `funasr`：配置其他值（如 xfyun）时启动即拒绝，防止服务进入未实现的分支；讯飞为后续任务缺口（§10） |
+| `ASR_MODEL_NAME` | str | **必填（无默认值）** | 公开 | funasr 模型别名；示例值 `paraformer-zh` 只写入 `.env.example`；缺失时启动失败 |
+| `ASR_DEVICE` | str | `cpu` | 公开 | `cpu\|cuda`；演示机置 `cuda`；CUDA 初始化失败自动回退 CPU 并记 WARN，CPU 也失败才 503（§2 定稿） |
+| `ASR_MODEL_CACHE_DIR` | str | **必填（无默认值）** | 公开（本机路径） | AutoModel cache_dir；示例值 `E:\ai_models\funasr` 只写入 `.env.example`；必须为 E 盘项目外目录，缺失时启动失败 |
 | `ASR_TIMEOUT_S` | float | `30.0` | 公开 | 单次转写超时；超时→503 ASR_UNAVAILABLE |
 | `ASR_MAX_UPLOAD_MB` | int | `20` | 公开 | 上传音频上限，超出→413 |
 | `ASR_SAMPLE_RATE` | int | `16000` | 公开 | 转码目标采样率（AGENTS §4 契约值，避免硬编码） |
@@ -134,7 +135,7 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 
 | 字段 | 类型 | 必填 | 校验 | 失败 |
 | --- | --- | --- | --- | --- |
-| `audio` | file（webm/opus） | 是 | 非空；前 4 字节为 EBML 魔数 `1A 45 DF A3`；大小 ≤ `ASR_MAX_UPLOAD_MB` | 缺失/非法字段 422（FastAPI 格式）；魔数不符 422 `AUDIO_INVALID`；超限 413 `AUDIO_TOO_LARGE` |
+| `audio` | file（webm/opus） | 是 | 非空；前 4 字节为 EBML 魔数 `1A 45 DF A3`（初筛）；大小 ≤ `ASR_MAX_UPLOAD_MB` | 缺失/非法字段 422（FastAPI 格式）；魔数不符 422 `AUDIO_INVALID`；超限 413 `AUDIO_TOO_LARGE`；魔数通过但内容损坏（截断/内部损坏）按 §5.4 判据同样归 422 `AUDIO_INVALID` |
 | `duration_s` | float | 是 | `0.1 ≤ duration_s ≤ 600.0` | 越界 422 |
 | `pause_cnt` | int | 是 | `0 ≤ pause_cnt ≤ 10000` | 越界 422 |
 
@@ -156,7 +157,7 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 | --- | --- | --- | --- | --- |
 | 并发/状态 | 404 `SESSION_NOT_FOUND`；409 `SESSION_COMPLETED` / `ANSWER_IN_PROGRESS` / `SESSION_RESET_REQUIRED` | 复用现有语义 | 否 | 409 视情况 |
 | 上传校验（租约前，廉价检查不占锁） | 422 字段校验；422 `AUDIO_INVALID`（魔数不符/过短）；413 `AUDIO_TOO_LARGE` | 客户端输入问题 | 否 | 修正后重试 |
-| 转码 | 503 `AUDIO_PROCESS_FAILED` | ffmpeg 对合法输入失败（环境/配置问题，P0 实测损坏输入退出码 183 属 AUDIO_INVALID 场景） | 否（释放租约回 active） | 是 |
+| 转码/内容损坏 | 422 `AUDIO_INVALID`；503 `AUDIO_PROCESS_FAILED` | **判据定稿**：ffprobe/ffmpeg 失败时，stderr 含 `Invalid data found when processing input` 或 `EBML header parsing failed` → 判**输入内容损坏**（魔数初筛无法覆盖的截断、内部损坏），一律 422 `AUDIO_INVALID`；其余失败（`FFMPEG_PATH` 不可执行/FileNotFoundError、`Unknown decoder` 等编解码或环境缺失）→ 503 `AUDIO_PROCESS_FAILED`。P0 实测损坏输入（退出码 183 + Invalid data 文案）按此归 422 | 否（释放租约回 active） | 422 须更换文件后重试；503 可原样重试 |
 | ASR | 503 `ASR_UNAVAILABLE` | funasr 异常/超时/未加载 | 否（释放租约回 active） | 是 |
 
 ### 5.5 重试与防重复推进
@@ -179,11 +180,11 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 | `server/api/sessions.py` | 修改 | 新增 `POST /{sid}/answers`（multipart），复用租约与原子落库骨架，§5.4 错误映射 |
 | `server/schemas.py` | 修改（最小） | 如 multipart 需要辅助校验模型则最小追加；响应复用现有类型不改 |
 | `tests/test_audio_flow.py` | **新增** | §7 矩阵；B/H（真实模型、断网）用 `ASR_ACCEPTANCE_REAL=1` 门控，默认 skip；D/E/F/G 用 monkeypatch 假 ASR/假 ffmpeg——**测试夹具与真实模型实测明确区分** |
-| `scripts/prepare_asr_model.py` | 新增（**可选项**，审批时可删） | 封装 §3.3 首次下载命令；不下载任何资产至本仓库 |
+| `scripts/`（任何文件） | **不改** | 首次模型下载使用 §3.3 文档命令，不新增脚本，控制范围 |
 | `server/main.py` | **不改** | sessions router 已挂载 |
 
 - **明确不含**：T6 录音界面/电平环（web/ 零改动）、TTS 重构（tts.py 零改动）、评分重构（scoring.py 零改动）、讯飞真实接入。
-- **Dockerfile**：当前仓库无 Dockerfile（worktree 顶层实测无此文件 [已验证]）。部署形态为本机/局域网（AGENTS §4），**T5 不需要 Dockerfile**；AGENTS §4 中"Dockerfile 必须安装 ffmpeg"属未来容器化要求，如启动容器化另立扩界申请，不在本规格。
+- **Dockerfile**：当前仓库无 Dockerfile（worktree 顶层实测无此文件 [已验证]）。AGENTS §4 明确"Dockerfile 必须安装 ffmpeg"，因此**新增 Dockerfile 列为待队长批准的扩界申请（§8-7，内容须含 ffmpeg 安装）**；T5 施工范围不含它，排期落点由队长指定（建议：M3 冻结前的部署准备批次）。
 
 ---
 
@@ -194,9 +195,9 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 | A | 真实 webm/opus → 16k 单声道 wav | `ffmpeg -hide_banner -loglevel error -y -i sample.webm -ac 1 -ar 16000 -c:a pcm_s16le out.wav; if ($LASTEXITCODE -ne 0) { throw "ffmpeg $LASTEXITCODE" }`；`ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -of default=nw=1 out.wav \| Select-Object -First 10` | 退出码 0；`pcm_s16le/16000/1` |
 | B | 真实中文短音频非空转写（`ASR_ACCEPTANCE_REAL=1` 门控，模型缓存就绪后跑） | 服务内对真实 wav 调 `transcribe`；`$LASTEXITCODE` 记录 | 已知中文语音 → 非空文本，语义人工比对；失败判据=空文本/异常退出 |
 | C | duration_s/wpm/pause_cnt/filler_cnt 正确 | 定长样本+已知文本提交后查 answers 行 | `duration_s`=提交值；`wpm == round(去空白转写字数/duration_s×60, 1)`；`pause_cnt`=提交值；`filler_cnt`=正则计数 |
-| D | 损坏文件明确失败且不推进会话 | 提交魔数非法文件 | 422 `AUDIO_INVALID`（或转码失败 503 `AUDIO_PROCESS_FAILED`）；session 仍 `active`；answers 计数不变 |
+| D | 损坏文件明确失败且不推进会话 | 提交两类样本：①魔数非法文件；②EBML 魔数正确但内容截断/内部损坏（如合法 webm 头部拼接随机尾部） | 两类**均 422 `AUDIO_INVALID`**（判据见 §5.4，不再二选一 503）；session 仍 `active`；answers 计数不变 |
 | E | ASR 异常不产生 Answer | monkeypatch `transcribe` 抛异常 | 503 `ASR_UNAVAILABLE`；answers 计数不变；session 回 `active`、租约清空 |
-| F | 同一提交重复请求不重复推进 | 并发两个相同请求（或首请求处理中再发） | 第二请求 409 `ANSWER_IN_PROGRESS`；answers 计数恰 +1 |
+| F | 并发重复请求不重复推进 | 并发两个相同请求（或首请求处理中再发；成功后的重发防护属客户端契约 §5.5-3，不入本用例） | 第二请求 409 `ANSWER_IN_PROGRESS`；answers 计数恰 +1 |
 | G | 临时 wav 必清理 | 请求成功与失败路径各跑一次后检查 `ASR_TEMP_DIR` | 目录无残留 .wav（实现：finally 删除，对齐 T4 临时文件清理风格） |
 | H | 模型已缓存不访问网络（`ASR_ACCEPTANCE_REAL=1` 门控） | 预置缓存后断网运行 B 同款（断网手段 T5 定，[未验证]） | 初始化+转写成功且无网络依赖报错 |
 | I | T1–T4 全量回归 | 项目 venv 内 `python -m pytest tests -q \| Select-Object -First 50` | 全部通过（seeds/text_flow/scoring/llm/tts 既有用例零回归） |
@@ -210,11 +211,11 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 | --- | --- | --- |
 | 1 | **方案 A/B 二选一** | 推荐 A（GPU，torch 2.5.1+cu121）；B 为降级（CPU 2.5.1）。切换成本=requirements 两行 |
 | 2 | requirements.txt 追加 6 项 | funasr==1.4.16、torch/torchaudio==2.5.1(+cu121)、numpy==1.26.4、soundfile==0.14.0、python-multipart==0.0.32；安装限项目 venv 且 `PIP_CACHE_DIR` 指 E 盘 |
-| 3 | `.env.example`/`config.py` 新增 14 键 | §4 键表；`XFYUN_*` 仅占位 |
+| 3 | `.env.example`/`config.py` 新增 14 键 | §4 键表；`ASR_MODEL_NAME`/`ASR_MODEL_CACHE_DIR` 必填无默认（示例值仅入 `.env.example`）；`ASR_PROVIDER` 锁定 `funasr`；`XFYUN_*` 仅占位 |
 | 4 | API 实施细则 + 4 个新错误码 | `422 AUDIO_INVALID`、`413 AUDIO_TOO_LARGE`、`503 AUDIO_PROCESS_FAILED`、`503 ASR_UNAVAILABLE`；端点名本身已在 AGENTS §8 契约列名 |
-| 5 | 文件边界（§6） | 新增 audio.py / test_audio_flow.py /（可选）prepare_asr_model.py；改 asr.py、sessions.py、schemas.py(最小)、config.py、.env.example、requirements.txt |
+| 5 | 文件边界（§6） | 新增 audio.py / test_audio_flow.py；改 asr.py、sessions.py、schemas.py(最小)、config.py、.env.example、requirements.txt；scripts/ 零改动（首次下载用 §3.3 命令） |
 | 6 | 模型目录与一次性联网下载 | `E:\ai_models\funasr` 创建；首次下载 paraformer-zh（§3.3）；此后离线复用 |
-| 7 | Dockerfile：**不需要** | 仓库现无 Dockerfile，本机/局域网部署；容器化另立申请 |
+| 7 | Dockerfile：**待批扩界（新增文件）** | 仓库现无 Dockerfile；按 AGENTS §4"必须安装 ffmpeg"新增，T5 施工不含，排期落点由队长指定（建议 M3 冻结前部署准备批次） |
 
 ---
 
@@ -231,6 +232,8 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 
 ## 10. 未解决事项
 
-- 队长对 §8-1 的 A/B 二选一未决；其余 6 项批准依赖该选择。
-- `ASR_DEVICE=cuda` 失败是否自动回退 `cpu`（建议：回退+日志告警，写入 T5 实现），随方案批准一并确认。
+- 队长对 §8-1 的 A/B 二选一未决（审查建议 A：torch/torchaudio 2.5.1+cu121，保留 CPU 运行时降级）；其余批准项依赖该选择。
+- CUDA 失败回退已定稿（§2：自动回退 CPU + WARN 日志；CPU 也失败才 503 ASR_UNAVAILABLE），随 §8 批准生效。
+- **讯飞备用链路为后续任务缺口**：`XFYUN_*` 键仅占位，无任何实现与调研；立项与否、何时接入由队长在后续任务票决定，立项前 `ASR_PROVIDER` 仅允许 `funasr`。
 - 验收 H 的断网手段与 J 的真实样本音频（建议用 T4 已产出的 TTS 音频转播为 webm 造数，或人工录一段）在 T5 施工首日确定。
+- Dockerfile 扩界的排期落点（§8-7）待队长指定。
