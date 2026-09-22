@@ -331,3 +331,385 @@ describe("QuestionAudioPlayer（固定题音频每道新题仅自动播放一次
     assert.equal(player.shouldAutoplay(3, false, ""), false);
   });
 });
+
+function validReportPayload(sessionId = 5) {
+  return {
+    id: 1,
+    session_id: sessionId,
+    job_title: "智驾测试",
+    overall: 80.5,
+    dimensions: {
+      professional_match: { score: 80, evidence: "用CANoe做总线", reason: "匹配" },
+      logic_structure: { score: 75, evidence: null, reason: "结构尚可" },
+      expression_fluency: { score: 91.3, evidence: null, reason: "语速正常" },
+      job_competence: { score: 78, evidence: null, reason: "素养合格" },
+    },
+    highlights: ["表达清晰"],
+    concerns: [],
+    improvement: ["补充场景覆盖细节"],
+  };
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("session-recovery（最终评分断连后只读报告恢复）", () => {
+  it("A. POST 只调用一次；网络异常后报告 404→404→200，最终返回成功报告", async () => {
+    const {
+      submitOnceThenResolve,
+      createVirtualClock,
+      REPORT_POLL_INTERVAL_MS,
+    } = await import("../lib/session-recovery.ts");
+    const clock = createVirtualClock();
+    let postCalls = 0;
+    let reportCalls = 0;
+    const fetchMock = async (input: string) => {
+      if (String(input).includes("/answers")) {
+        throw new Error("should not POST via fetch in this test");
+      }
+      reportCalls += 1;
+      if (reportCalls <= 2) {
+        return jsonResponse(404, {
+          detail: { code: "REPORT_NOT_FOUND", message: "报告尚未生成" },
+        });
+      }
+      return jsonResponse(200, validReportPayload(5));
+    };
+    const result = await submitOnceThenResolve(
+      async () => {
+        postCalls += 1;
+        return { kind: "network" };
+      },
+      5,
+      {
+        fetch: fetchMock,
+        sleep: clock.sleep,
+        now: clock.now,
+        intervalMs: REPORT_POLL_INTERVAL_MS,
+        maxMs: 120_000,
+      },
+    );
+    assert.equal(postCalls, 1);
+    assert.equal(reportCalls, 3);
+    assert.equal(result.outcome, "report_ready");
+    if (result.outcome === "report_ready") {
+      assert.equal(result.report.session_id, 5);
+      assert.equal(result.report.dimensions.expression_fluency.score, 91.3);
+    }
+  });
+
+  it("B. HTTP 500 未知错误后报告立即 200，进入报告恢复", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let postCalls = 0;
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => {
+        postCalls += 1;
+        return { kind: "http", status: 500, code: null, serverMessage: null };
+      },
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(200, validReportPayload(5));
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(postCalls, 1);
+    assert.equal(reportCalls, 1);
+    assert.equal(result.outcome, "report_ready");
+  });
+
+  it("C. 503 SCORING_UNAVAILABLE 不进入轮询", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => ({
+        kind: "http",
+        status: 503,
+        code: "SCORING_UNAVAILABLE",
+        serverMessage: "评分不可用",
+      }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(200, validReportPayload(5));
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(reportCalls, 0);
+    assert.equal(result.outcome, "scoring_unavailable");
+  });
+
+  it("D. 409 ANSWER_IN_PROGRESS 不重发 POST、不解除未知状态锁（不进入轮询）", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let postCalls = 0;
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => {
+        postCalls += 1;
+        return {
+          kind: "http",
+          status: 409,
+          code: "ANSWER_IN_PROGRESS",
+          serverMessage: "处理中",
+        };
+      },
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(200, validReportPayload(5));
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(postCalls, 1);
+    assert.equal(reportCalls, 0);
+    assert.equal(result.outcome, "answer_in_progress");
+  });
+
+  it("E. 报告轮询遇到 SESSION_NOT_FOUND 立即停止", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => ({ kind: "network" }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(404, {
+            detail: { code: "SESSION_NOT_FOUND", message: "会话不存在" },
+          });
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(reportCalls, 1);
+    assert.equal(result.outcome, "session_not_found");
+  });
+
+  it("F. 报告返回非法 JSON/结构错误时停止并判定未知", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => ({ kind: "http", status: 500, code: null, serverMessage: null }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(200, { id: "bad", session_id: 5 });
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(reportCalls, 1);
+    assert.equal(result.outcome, "still_unknown");
+    if (result.outcome === "still_unknown") {
+      assert.equal(result.reason, "invalid_report");
+    }
+  });
+
+  it("G. 超过最大轮询次数后停止，绝不重发 POST", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let postCalls = 0;
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => {
+        postCalls += 1;
+        return { kind: "network" };
+      },
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(404, {
+            detail: { code: "REPORT_NOT_FOUND", message: "尚未生成" },
+          });
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+        intervalMs: 2000,
+        maxMs: 4000,
+      },
+    );
+    assert.equal(postCalls, 1);
+    assert.ok(reportCalls >= 2);
+    assert.equal(result.outcome, "still_unknown");
+    if (result.outcome === "still_unknown") {
+      assert.equal(result.reason, "timeout");
+    }
+  });
+
+  it("H. AbortSignal 取消后不继续轮询", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    const controller = new AbortController();
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => ({ kind: "network" }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          if (reportCalls === 1) {
+            return jsonResponse(404, {
+              detail: { code: "REPORT_NOT_FOUND", message: "尚未生成" },
+            });
+          }
+          controller.abort();
+          return jsonResponse(404, {
+            detail: { code: "REPORT_NOT_FOUND", message: "尚未生成" },
+          });
+        },
+        sleep: async (ms, signal) => {
+          controller.abort();
+          return clock.sleep(ms, signal);
+        },
+        now: clock.now,
+        signal: controller.signal,
+        intervalMs: 2000,
+        maxMs: 120_000,
+      },
+    );
+    assert.equal(result.outcome, "aborted");
+    assert.ok(reportCalls <= 2);
+  });
+
+  it("I. 已完成会话 409 SESSION_COMPLETED 时允许只读确认报告", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let postCalls = 0;
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => {
+        postCalls += 1;
+        return {
+          kind: "http",
+          status: 409,
+          code: "SESSION_COMPLETED",
+          serverMessage: "面试已结束",
+        };
+      },
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(200, validReportPayload(5));
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(postCalls, 1);
+    assert.equal(reportCalls, 1);
+    assert.equal(result.outcome, "report_ready");
+  });
+
+  it("J. 未知 404（无 code 或非 REPORT_NOT_FOUND）立即停止，只 GET 一次", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => ({ kind: "http", status: 500, code: null, serverMessage: null }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(404, { detail: { message: "not found" } });
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+        intervalMs: 2000,
+        maxMs: 120_000,
+      },
+    );
+    assert.equal(reportCalls, 1);
+    assert.equal(result.outcome, "still_unknown");
+    if (result.outcome === "still_unknown") {
+      assert.equal(result.reason, "unexpected_http");
+    }
+
+    reportCalls = 0;
+    const bare = await submitOnceThenResolve(
+      async () => ({ kind: "network" }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          return jsonResponse(404, { detail: { code: "SOME_OTHER_404", message: "x" } });
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(reportCalls, 1);
+    assert.equal(bare.outcome, "still_unknown");
+    if (bare.outcome === "still_unknown") {
+      assert.equal(bare.reason, "unexpected_http");
+    }
+  });
+
+  it("K. 仅明确 REPORT_NOT_FOUND 的 404 才继续轮询", async () => {
+    const { submitOnceThenResolve, createVirtualClock } = await import(
+      "../lib/session-recovery.ts"
+    );
+    const clock = createVirtualClock();
+    let reportCalls = 0;
+    const result = await submitOnceThenResolve(
+      async () => ({ kind: "network" }),
+      5,
+      {
+        fetch: async () => {
+          reportCalls += 1;
+          if (reportCalls === 1) {
+            return jsonResponse(404, {
+              detail: { code: "REPORT_NOT_FOUND", message: "尚未生成" },
+            });
+          }
+          return jsonResponse(200, validReportPayload(5));
+        },
+        sleep: clock.sleep,
+        now: clock.now,
+      },
+    );
+    assert.equal(reportCalls, 2);
+    assert.equal(result.outcome, "report_ready");
+  });
+});
