@@ -197,6 +197,8 @@ HTTP 状态码严格遵照 §8.1 规范：
 
 为使 Node 22.22+ 原生测试运行器无需 JSX 转译即可直接导入测试，本算法与核心类型统一定义在独立纯逻辑模块 `web/lib/report-data.ts` 中，供页面组件 `web/app/reports/[sid]/page.tsx` 与单元测试 `web/tests/report.test.ts` 共同导入，避免在测试中复制代码。
 ```typescript
+import * as echarts from "echarts";
+
 export interface DimensionData {
   score: number | null;
   evidence: string | null;
@@ -214,52 +216,119 @@ export interface ReportData {
   session_id: number;
   job_title: string;
   overall: number | null;
-  dimensions: Record<string, DimensionData>;
+  dimensions: {
+    professional_match: DimensionData;
+    logic_structure: DimensionData;
+    expression_fluency: DimensionData;
+    job_competence: DimensionData;
+  };
   highlights: string[];
   concerns: string[];
   improvement: string[];
 }
 
-const DIMENSION_LABEL_MAP: Record<string, string> = {
+const REQUIRED_DIMENSIONS = [
+  "professional_match",
+  "logic_structure",
+  "expression_fluency",
+  "job_competence",
+] as const;
+
+const DIMENSION_LABEL_MAP: Record<(typeof REQUIRED_DIMENSIONS)[number], string> = {
   professional_match: "专业匹配度",
   logic_structure: "逻辑结构",
   expression_fluency: "表达流畅度",
   job_competence: "岗位素养",
 };
 
+function isPositiveInteger(val: unknown): val is number {
+  return typeof val === "number" && Number.isInteger(val) && val > 0;
+}
+
+function isValidScore(val: unknown): val is number | null {
+  if (val === null) return true;
+  return typeof val === "number" && Number.isFinite(val) && val >= 0 && val <= 100;
+}
+
+function isStringArray(val: unknown): val is string[] {
+  return Array.isArray(val) && val.every((item) => typeof item === "string");
+}
+
 /**
- * 严格解析并归一化后端报告响应，保证字段结构完整与字面证据无损（首尾空格、特殊符号严格原样保留）
+ * 严格校验并解析后端报告响应，拒绝任何非法格式、类型错误或字段缺失，严禁静默赋予默认值；
+ * 证据原文字面值原样保留（包含首尾空格与特殊符号）。
  */
 export function parseReportResponse(raw: unknown): ReportData {
   if (!raw || typeof raw !== "object") {
-    throw new Error("Invalid report response: expected object");
+    throw new Error("Invalid report response: root must be a non-null object");
   }
-  const r = raw as Record<string, any>;
-  const rawDims = r.dimensions || {};
-  const dimensions: Record<string, DimensionData> = {};
-  for (const key of [
-    "professional_match",
-    "logic_structure",
-    "expression_fluency",
-    "job_competence",
-  ]) {
+  const r = raw as Record<string, unknown>;
+
+  if (!isPositiveInteger(r.id)) {
+    throw new Error("Invalid report response: 'id' must be a positive integer");
+  }
+  if (!isPositiveInteger(r.session_id)) {
+    throw new Error("Invalid report response: 'session_id' must be a positive integer");
+  }
+  if (typeof r.job_title !== "string") {
+    throw new Error("Invalid report response: 'job_title' must be a string");
+  }
+  if (!isValidScore(r.overall)) {
+    throw new Error("Invalid report response: 'overall' must be null or finite number within [0, 100]");
+  }
+
+  if (!r.dimensions || typeof r.dimensions !== "object") {
+    throw new Error("Invalid report response: 'dimensions' must be an object");
+  }
+  const rawDims = r.dimensions as Record<string, unknown>;
+
+  const dimensions = {} as ReportData["dimensions"];
+  for (const key of REQUIRED_DIMENSIONS) {
+    if (!(key in rawDims)) {
+      throw new Error(`Invalid report response: missing required dimension '${key}'`);
+    }
     const d = rawDims[key];
+    if (!d || typeof d !== "object") {
+      throw new Error(`Invalid report response: dimension '${key}' must be an object`);
+    }
+    const dimObj = d as Record<string, unknown>;
+
+    if (!isValidScore(dimObj.score)) {
+      throw new Error(`Invalid report response: dimension '${key}.score' must be null or finite number within [0, 100]`);
+    }
+    if (dimObj.evidence !== null && typeof dimObj.evidence !== "string") {
+      throw new Error(`Invalid report response: dimension '${key}.evidence' must be null or string`);
+    }
+    if (typeof dimObj.reason !== "string") {
+      throw new Error(`Invalid report response: dimension '${key}.reason' must be a string`);
+    }
+
     dimensions[key] = {
-      score: d && typeof d.score === "number" && !isNaN(d.score) ? d.score : null,
-      evidence: d && typeof d.evidence === "string" ? d.evidence : null,
-      reason: d && typeof d.reason === "string" ? d.reason : "",
+      score: dimObj.score,
+      evidence: dimObj.evidence, // 严格原样保留字面字符串，包括首尾空格
+      reason: dimObj.reason,
     };
   }
 
+  if (!isStringArray(r.highlights)) {
+    throw new Error("Invalid report response: 'highlights' must be an array of strings");
+  }
+  if (!isStringArray(r.concerns)) {
+    throw new Error("Invalid report response: 'concerns' must be an array of strings");
+  }
+  if (!isStringArray(r.improvement)) {
+    throw new Error("Invalid report response: 'improvement' must be an array of strings");
+  }
+
   return {
-    id: typeof r.id === "number" ? r.id : 0,
-    session_id: typeof r.session_id === "number" ? r.session_id : 0,
-    job_title: typeof r.job_title === "string" ? r.job_title : "未知岗位",
-    overall: typeof r.overall === "number" && !isNaN(r.overall) ? r.overall : null,
+    id: r.id,
+    session_id: r.session_id,
+    job_title: r.job_title,
+    overall: r.overall,
     dimensions,
-    highlights: Array.isArray(r.highlights) ? r.highlights : [],
-    concerns: Array.isArray(r.concerns) ? r.concerns : [],
-    improvement: Array.isArray(r.improvement) ? r.improvement : [],
+    highlights: r.highlights,
+    concerns: r.concerns,
+    improvement: r.improvement,
   };
 }
 
@@ -462,13 +531,14 @@ export function transformDimensionsToRadar(
 
 进入 T7-R1（报告页实现）时，**严格锁死文件边界**。必须使用已获批准的精准版本 `"echarts": "5.6.0"`（AGENTS.md §4、§10.1 已批准，MIT 协议，传递依赖由 lockfile 严格锁定），未经单独书面申请并获指挥官 Astra 批准，禁止修改任何额外文件：
 
-### 默认允许修改与创建边界（共 6 个文件）：
+### 默认允许修改与创建边界（共 7 个文件）：
 1. `web/package.json`（声明精准版本 `"echarts": "5.6.0"` 生产依赖，并在 scripts 中配置确定性的 `"test": "node --experimental-strip-types --test tests/report.test.ts"` 脚本，由 `web/` 根目录执行）
 2. `web/package-lock.json`（安装依赖后由 npm 自动生成的确定性锁文件，锁定传递依赖）
-3. `web/lib/report-data.ts`（报告页纯数据解析函数 `parseReportResponse`、雷达图指标计算 `transformDimensionsToRadar` 与可空维度降级逻辑，供页面与测试共同导入）
-4. `web/app/reports/[sid]/page.tsx`（报告页核心组件、数据获取、ECharts 挂载与座舱 HMI 渲染逻辑，从 `web/lib/report-data.ts` 导入纯函数）
-5. `web/app/globals.css`（仅限添加座舱微光动画、发光描边、深空背景等 CSS 工具类与 keyframes）
-6. `web/tests/report.test.ts`（以相对路径 `import { parseReportResponse, transformDimensionsToRadar } from "../lib/report-data.ts"` 导入纯函数进行单元测试，由 `npm test` 驱动）
+3. `web/tsconfig.json`（在 `compilerOptions` 中增加 `"allowImportingTsExtensions": true`，使 TypeScript 编译器支持测试代码显式使用 `.ts` 扩展名导入，消除 `npm run typecheck` 时的 TS5097 报错）
+4. `web/lib/report-data.ts`（报告页纯数据严格解析函数 `parseReportResponse`、雷达图指标计算 `transformDimensionsToRadar` 与可空维度降级逻辑，供页面与测试共同导入）
+5. `web/app/reports/[sid]/page.tsx`（报告页核心组件、数据获取、ECharts 挂载与座舱 HMI 渲染逻辑，从 `web/lib/report-data.ts` 导入纯函数）
+6. `web/app/globals.css`（仅限添加座舱微光动画、发光描边、深空背景等 CSS 工具类与 keyframes）
+7. `web/tests/report.test.ts`（以相对路径 `import { parseReportResponse, transformDimensionsToRadar } from "../lib/report-data.ts"` 导入纯函数进行单元测试，由 `npm test` 驱动）
 
 ### 扩界申请机制：
 若在实施中发现需抽取独立组件（如 `web/components/ReportRadar.tsx`）或公共样式文件：
@@ -500,6 +570,8 @@ export function transformDimensionsToRadar(
 | **R-T03** | 缺失 ≥2 维时的优雅降级 | 输入有效分数 < 3 个，断言 `canRenderRadar === false`，`radarOptions === null`，`validCount < 3` 触发线性降级标记 |
 | **R-T04** | 全部维度为 null 极端数据 | 输入 4 维分数全为 null，断言 `canRenderRadar === false`，`validCount === 0`，不抛出异常 |
 | **R-T05** | 证据原文字面值无损保留与解析 | 使用包含首尾空格、特殊标点与符号的 evidence mock 载荷调用 `parseReportResponse()`，断言解析出的 `dimensions.professional_match.evidence` 与输入字面值严格完全相同，绝不截断或破坏空格 |
+| **R-T06** | 非法顶层字段严格抛错 | 输入缺失 `id`、`id <= 0`、`job_title` 非字符串、`overall` 超出 [0, 100] 范围或根节点非对象的 mock 载荷调用 `parseReportResponse()`，断言严格抛出格式错误，绝不静默补充默认值 |
+| **R-T07** | 维度与数组成员类型错误严格抛错 | 输入缺失任一必需维度（如缺少 `professional_match`）、`score` 非法负数或非数字、`evidence` 为非 string 且非 null、或 `highlights`/`concerns`/`improvement` 包含非字符串元素的 mock 载荷调用 `parseReportResponse()`，断言严格抛出格式错误，绝不吞错 |
 
 ### 9.2 30 秒人工验收路径 (评审演练)
 1. **0–5 秒（主视觉第一印象）**：
