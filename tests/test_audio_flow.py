@@ -23,6 +23,7 @@ from server.config import settings
 from server.services import asr as asr_module
 from server.services import audio as audio_module
 from server.services import orchestrator
+from server.services import scoring as scoring_module
 from server.services.asr import ASRUnavailableError
 
 
@@ -349,3 +350,123 @@ def test_real_model_transcribe_chinese(monkeypatch):
         assert ans is not None
         assert ans.answer_text.strip() != ""
         assert re.search(r"[\u4e00-\u9fff]", ans.answer_text), f"转写非中文: {ans.answer_text!r}"
+
+
+def test_oversize_rejected_before_probe_lease_and_asr(monkeypatch, valid_webm_bytes):
+    """上传限流：最多读上限+1字节；超限 413 且不进入探测/转码/ASR/租约阶段。"""
+    monkeypatch.setattr(settings, "asr_max_upload_mb", 0)
+    called = {"probe": 0, "transcode": 0, "asr": 0}
+
+    def _probe(path):
+        called["probe"] += 1
+        return None
+
+    def _transcode(w, v):
+        called["transcode"] += 1
+
+    async def _asr(wav_path):
+        called["asr"] += 1
+        return "文本"
+
+    monkeypatch.setattr(audio_module, "probe_webm", _probe)
+    monkeypatch.setattr(audio_module, "transcode_to_16k_wav", _transcode)
+    monkeypatch.setattr(asr_module, "transcribe_wav", _asr)
+
+    client = TestClient(app)
+    sid = _create_session(client)
+    resp = _post_audio(client, sid, valid_webm_bytes)
+    assert resp.status_code == 413
+    assert resp.json()["detail"]["code"] == "AUDIO_TOO_LARGE"
+    assert called == {"probe": 0, "transcode": 0, "asr": 0}
+    with SessionLocal() as db:
+        sess = db.query(Session).filter(Session.id == sid).first()
+        assert sess.status == "active"  # 从未进入租约阶段
+        assert sess.lease_token is None
+        assert db.query(Answer).filter(Answer.session_id == sid).count() == 0
+
+
+def test_full_voice_flow_feeds_acoustics_to_scoring(monkeypatch, valid_webm_bytes):
+    """D：6 题语音流程——评分引擎收到本次+全部历史语音回答的声学字段，报告 fluency 非 null。"""
+    _fake_pipeline(monkeypatch)  # 探测/转码直通 + ASR 固定文本 + 无追问
+
+    captured = {}
+    canned_report = {
+        "dimensions": {
+            "professional_match": {"score": 88.0, "evidence": "CANoe", "reason": "熟练"},
+            "logic_structure": {"score": 82.5, "evidence": "CANoe", "reason": "清晰"},
+            "expression_fluency": {"score": 88.0, "evidence": None, "reason": "声学量化"},
+            "job_competence": {"score": 83.5, "evidence": "CANoe", "reason": "规范"},
+        },
+        "highlights": [], "concerns": [], "improvement": ["继续"],
+        "overall": 85.5,
+    }
+
+    async def _capture_scoring(*args, **kwargs):
+        captured.update(kwargs)
+        return canned_report
+
+    monkeypatch.setattr(scoring_module, "score_interview", _capture_scoring)
+
+    client = TestClient(app)
+    sid = _create_session(client)
+    for i in range(6):
+        resp = _post_audio(client, sid, valid_webm_bytes, duration_s="6.0", pause_cnt="1")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        if i < 5:
+            assert data["type"] == "next"
+    assert data["type"] == "done"
+
+    assert captured["mode"] == "voice"
+    samples = captured["acoustic_samples"]
+    assert len(samples) == 6  # 5 条历史（DB）+ 1 条本次（显式追加）
+    for s in samples:
+        assert s["duration_s"] == 6.0
+        assert s["wpm"] is not None
+        assert s["pause_cnt"] == 1
+        assert s["filler_cnt"] is not None
+
+    rep = client.get(f"/api/reports/{sid}")
+    assert rep.status_code == 200
+    assert rep.json()["dimensions"]["expression_fluency"]["score"] == 88.0  # 不再固定 null
+
+
+def test_text_flow_scoring_keeps_acoustics_absent(monkeypatch):
+    """D 回归：文本端点评分调用无声学参数，报告 fluency 保持 null 与原 reason。"""
+    captured = {}
+    canned_report = {
+        "dimensions": {
+            "professional_match": {"score": 88.0, "evidence": "专业能力", "reason": "熟练"},
+            "logic_structure": {"score": 82.5, "evidence": "专业能力", "reason": "清晰"},
+            "expression_fluency": {"score": None, "evidence": None, "reason": "文本模式，未评估语音流畅度"},
+            "job_competence": {"score": 83.5, "evidence": "专业能力", "reason": "规范"},
+        },
+        "highlights": [], "concerns": [], "improvement": [],
+        "overall": 84.7,
+    }
+
+    async def _capture_scoring(*args, **kwargs):
+        captured.update(kwargs)
+        return canned_report
+
+    monkeypatch.setattr(scoring_module, "score_interview", _capture_scoring)
+    monkeypatch.setattr(orchestrator, "evaluate_followup", AsyncMock(return_value=None))
+
+    client = TestClient(app)
+    sid = _create_session(client)
+    for i in range(6):
+        resp = client.post(
+            f"/api/sessions/{sid}/answers/text",
+            json={"answer_text": "这是展示专业能力的详细技术回答，包含专业能力关键词。"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+    assert data["type"] == "done"
+    assert captured["mode"] == "text"
+    assert captured.get("acoustic_samples") is None
+
+    rep = client.get(f"/api/reports/{sid}")
+    assert rep.status_code == 200
+    fluency = rep.json()["dimensions"]["expression_fluency"]
+    assert fluency["score"] is None
+    assert fluency["reason"] == "文本模式，未评估语音流畅度"

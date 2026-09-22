@@ -483,8 +483,10 @@ async def submit_audio_answer(
             detail={"code": "ASR_UNAVAILABLE", "message": "ASR 服务未启用"},
         )
 
-    audio_bytes = await audio.read()
-    if len(audio_bytes) > settings.asr_max_upload_mb * 1024 * 1024:
+    max_bytes = settings.asr_max_upload_mb * 1024 * 1024
+    # 最多读取 上限+1 字节：足以判定超限，又不把超大文件整体读入内存
+    audio_bytes = await audio.read(max_bytes + 1)
+    if len(audio_bytes) > max_bytes:
         raise HTTPException(
             status_code=413,
             detail={"code": "AUDIO_TOO_LARGE", "message": "音频文件超过大小限制"},
@@ -673,8 +675,31 @@ async def submit_audio_answer(
                     "jd_digest": job.jd_digest,
                     "terms": job.terms_json,
                 }
+                # 声学数据：历史语音回答取自 DB Answer 记录（文本回答无完整声学字段，自动排除）；
+                # 本次待提交回答尚未落库，其声学数据显式追加，保证评分输入完整。
+                acoustic_samples = [
+                    {
+                        "duration_s": a.duration_s,
+                        "wpm": a.wpm,
+                        "pause_cnt": a.pause_cnt,
+                        "filler_cnt": a.filler_cnt,
+                    }
+                    for a in current_answers
+                    if a.duration_s is not None and a.wpm is not None
+                ]
+                acoustic_samples.append(
+                    {
+                        "duration_s": duration_s,
+                        "wpm": wpm,
+                        "pause_cnt": pause_cnt,
+                        "filler_cnt": filler_cnt,
+                    }
+                )
                 report_data = await scoring.score_interview(
-                    answers=all_answers, job_info=job_info, mode="voice"
+                    answers=all_answers,
+                    job_info=job_info,
+                    mode="voice",
+                    acoustic_samples=acoustic_samples,
                 )
                 next_type = "done"
                 next_q = None

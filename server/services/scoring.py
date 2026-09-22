@@ -79,6 +79,75 @@ def calculate_overall(dimensions: dict[str, dict]) -> Optional[float]:
     return float(mean)
 
 
+# 表达流畅度确定性量化规则（T5-FIX；无 LLM 参与）
+WPM_NORMAL_LOW = 220.0        # 正常语速区间下限（字/分）
+WPM_NORMAL_HIGH = 280.0       # 正常语速区间上限（字/分）
+WPM_PENALTY_PER_UNIT = 0.2    # 每偏离 1 字/分 扣 0.2 分
+WPM_PENALTY_CAP = 40.0
+PAUSE_FREE_PER_MIN = 6.0      # 每分钟停顿 ≤6 次不扣分
+PAUSE_PENALTY_PER_UNIT = 2.0  # 超出部分每次扣 2 分（按每分钟归一化）
+PAUSE_PENALTY_CAP = 30.0
+FILLER_FREE_PER_MIN = 5.0     # 每分钟填充词 ≤5 个不扣分
+FILLER_PENALTY_PER_UNIT = 3.0 # 超出部分每个扣 3 分（按每分钟归一化）
+FILLER_PENALTY_CAP = 30.0
+
+
+def compute_acoustic_fluency(samples: list[dict]) -> dict:
+    """基于声学特征（语速/停顿/填充词）的确定性表达流畅度评分，可独立单测。
+
+    samples：每条语音回答一条记录 {duration_s, wpm, pause_cnt, filler_cnt}；
+    只统计声学字段完整的记录，停顿/填充词按时长归一化为每分钟频率，
+    避免长回答天然吃亏；语速按时长加权平均。
+    声学数据不足（无完整记录）时 score=None，绝不虚构评分；
+    evidence 恒为 None：声学数字不得冒充原文引用，无合法原文引用时按契约置空。
+    """
+    complete = [
+        s for s in (samples or [])
+        if s.get("duration_s") is not None and float(s["duration_s"]) > 0
+        and s.get("wpm") is not None
+        and s.get("pause_cnt") is not None
+        and s.get("filler_cnt") is not None
+    ]
+    if not complete:
+        return {
+            "score": None,
+            "evidence": None,
+            "reason": "声学数据不足（缺少时长/语速/停顿/填充词的完整记录），未评估表达流畅度",
+        }
+
+    total_duration = sum(Decimal(str(s["duration_s"])) for s in complete)
+    wpm = float(
+        sum(Decimal(str(s["wpm"])) * Decimal(str(s["duration_s"])) for s in complete)
+        / total_duration
+    )
+    pause_per_min = float(
+        sum(Decimal(str(s["pause_cnt"])) for s in complete) * 60 / total_duration
+    )
+    filler_per_min = float(
+        sum(Decimal(str(s["filler_cnt"])) for s in complete) * 60 / total_duration
+    )
+
+    wpm_dev = max(0.0, WPM_NORMAL_LOW - wpm, wpm - WPM_NORMAL_HIGH)
+    wpm_penalty = min(WPM_PENALTY_CAP, wpm_dev * WPM_PENALTY_PER_UNIT)
+    pause_penalty = min(
+        PAUSE_PENALTY_CAP, max(0.0, pause_per_min - PAUSE_FREE_PER_MIN) * PAUSE_PENALTY_PER_UNIT
+    )
+    filler_penalty = min(
+        FILLER_PENALTY_CAP, max(0.0, filler_per_min - FILLER_FREE_PER_MIN) * FILLER_PENALTY_PER_UNIT
+    )
+
+    score = max(0.0, 100.0 - wpm_penalty - pause_penalty - filler_penalty)
+    score = float(Decimal(str(score)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+    reason = (
+        f"语速{wpm:.0f}字/分（正常区间220-280，扣{wpm_penalty:.1f}分），"
+        f"停顿{pause_per_min:.1f}次/分（≤6次/分不扣分，扣{pause_penalty:.1f}分），"
+        f"填充词{filler_per_min:.1f}个/分（≤5个/分不扣分，扣{filler_penalty:.1f}分），"
+        f"共{len(complete)}条有效语音回答"
+    )
+    return {"score": score, "evidence": None, "reason": reason}
+
+
 async def call_scoring_llm(messages: list, answers: list[str]) -> SingleScoringResult:
     """单次调用评分模型并按维度校验证据合规性：
     1. 某维度证据无效时发起一次性针对性重试（一次修正请求同时修正全部无效维度）；
@@ -158,11 +227,18 @@ def build_scoring_prompt(answers: list[str], job_info: dict) -> list[dict]:
     ]
 
 
-async def score_interview(answers: list[str], job_info: dict, mode: str = "text") -> dict:
+async def score_interview(
+    answers: list[str],
+    job_info: dict,
+    mode: str = "text",
+    acoustic_samples: Optional[list[dict]] = None,
+) -> dict:
     """执行双评并仲裁汇总出最终报告数据：
     1. 逐维保留有效结果；某维缺失仅影响该维；
     2. 两次均无有效证据生成全空报告；
     3. 只有当真正模型链不可用（两次调用均抛出异常）时才报 503 ScoringUnavailableError。
+    acoustic_samples：语音模式（mode="voice"）下各语音回答的声学记录
+    （{duration_s, wpm, pause_cnt, filler_cnt}），表达流畅度据此确定性量化，无第三次 LLM 调用。
     """
     messages_1 = build_scoring_prompt(answers, job_info)
     messages_2 = build_scoring_prompt(answers, job_info)
@@ -196,7 +272,7 @@ async def score_interview(answers: list[str], job_info: dict, mode: str = "text"
         res2.job_competence if res2 else None,
     )
 
-    # 表达流畅度在文本模式置为 None
+    # 表达流畅度：文本模式保持 null；语音模式由确定性声学规则量化（数据不足时同样为 null，不虚构）
     if mode == "text":
         fluency_dim = {
             "score": None,
@@ -204,11 +280,7 @@ async def score_interview(answers: list[str], job_info: dict, mode: str = "text"
             "reason": "文本模式，未评估语音流畅度",
         }
     else:
-        fluency_dim = {
-            "score": None,
-            "evidence": None,
-            "reason": "未评估",
-        }
+        fluency_dim = compute_acoustic_fluency(acoustic_samples or [])
 
     dimensions = {
         "professional_match": {"score": prof_score, "evidence": prof_ev, "reason": prof_reason},
