@@ -10,6 +10,7 @@ from server.services.scoring import (
     score_interview,
     SingleDimensionScore,
     SingleScoringResult,
+    compute_acoustic_fluency,
 )
 
 
@@ -287,3 +288,104 @@ async def test_score_interview_retry_evidence_correction_success():
         assert report["dimensions"]["job_competence"]["score"] == 85.0
         # overall: (89.0 + 83.0 + 85.0)/3 = 85.666... -> 85.7
         assert report["overall"] == 85.7
+
+
+def test_compute_acoustic_fluency_normal_range_full_score():
+    """B：正常语速区间内（220-280字/分）满分，结果确定且与输入顺序无关"""
+    samples = [
+        {"duration_s": 30.0, "wpm": 250.0, "pause_cnt": 2, "filler_cnt": 1},
+        {"duration_s": 30.0, "wpm": 260.0, "pause_cnt": 1, "filler_cnt": 1},
+    ]
+    result = compute_acoustic_fluency(samples)
+    assert result["score"] == 100.0
+    assert 0.0 <= result["score"] <= 100.0
+    assert result["evidence"] is None  # 声学数字不得冒充原文引用
+    assert "语速" in result["reason"]
+    assert "停顿" in result["reason"]
+    assert "填充词" in result["reason"]
+    # 确定性：与输入顺序无关
+    assert result == compute_acoustic_fluency(list(reversed(samples)))
+
+
+def test_compute_acoustic_fluency_penalizes_deviation_not_constant():
+    """B：评分确实随 wpm/pause_cnt/filler_cnt 变化，不是固定常量（正常区间220-280）"""
+    base = {"duration_s": 60.0, "wpm": 250.0, "pause_cnt": 3, "filler_cnt": 2}
+    normal = compute_acoustic_fluency([base])["score"]
+    too_fast = compute_acoustic_fluency([{**base, "wpm": 330.0}])["score"]        # (330-280)*0.2=10
+    too_slow = compute_acoustic_fluency([{**base, "wpm": 180.0}])["score"]        # (220-180)*0.2=8
+    pause_heavy = compute_acoustic_fluency([{**base, "pause_cnt": 12}])["score"]  # (12-6)*2=12
+    filler_heavy = compute_acoustic_fluency([{**base, "filler_cnt": 15}])["score"]  # (15-5)*3=30
+
+    assert normal == 100.0
+    assert too_fast == 90.0
+    assert too_slow == 92.0
+    assert pause_heavy == 88.0
+    assert filler_heavy == 70.0
+    assert len({normal, too_fast, too_slow, pause_heavy, filler_heavy}) == 5
+
+
+def test_compute_acoustic_fluency_reason_contains_actual_stats():
+    """B：reason 必须由实际统计值生成"""
+    result = compute_acoustic_fluency(
+        [{"duration_s": 60.0, "wpm": 330.0, "pause_cnt": 3, "filler_cnt": 2}]
+    )
+    assert "语速330字/分" in result["reason"]
+    assert "扣10.0分" in result["reason"]
+    assert result["evidence"] is None
+
+
+def test_compute_acoustic_fluency_missing_data_returns_null():
+    """C：声学数据缺失不得虚构评分"""
+    assert compute_acoustic_fluency([])["score"] is None
+    assert compute_acoustic_fluency(None)["score"] is None
+    result = compute_acoustic_fluency(
+        [{"duration_s": 60.0, "wpm": None, "pause_cnt": 2, "filler_cnt": 1}]
+    )
+    assert result["score"] is None
+    assert result["evidence"] is None
+    assert "声学数据不足" in result["reason"]
+
+
+@pytest.mark.anyio
+async def test_score_interview_voice_mode_computes_acoustic_fluency():
+    """B：语音模式表达流畅度由声学规则量化，参与 overall"""
+    answers = ["我熟悉智能驾驶仿真测试，主要用CANoe排查总线。"]
+    job_info = {"title": "智驾测试", "jd_digest": "...", "terms": ["CANoe"]}
+    mock_result = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=90.0, evidence="熟悉智能驾驶仿真测试", reason="掌握"),
+        logic_structure=SingleDimensionScore(score=85.0, evidence="熟悉智能驾驶仿真测试", reason="清晰"),
+        job_competence=SingleDimensionScore(score=80.0, evidence="熟悉智能驾驶仿真测试", reason="良好"),
+        highlights=[], concerns=[], improvement=[],
+    )
+    with patch("server.services.scoring.call_scoring_llm", AsyncMock(side_effect=[mock_result, mock_result])):
+        report = await score_interview(
+            answers=answers, job_info=job_info, mode="voice",
+            acoustic_samples=[{"duration_s": 60.0, "wpm": 250.0, "pause_cnt": 3, "filler_cnt": 2}],
+        )
+    fluency = report["dimensions"]["expression_fluency"]
+    assert fluency["score"] == 100.0
+    assert fluency["evidence"] is None
+    assert "语速250字/分" in fluency["reason"]
+    # overall 含 fluency：(90.0 + 85.0 + 80.0 + 100.0)/4 = 88.75 -> 88.8
+    assert report["overall"] == 88.8
+
+
+@pytest.mark.anyio
+async def test_score_interview_voice_mode_missing_acoustics_null_overall_excludes_fluency():
+    """C：语音模式声学缺失 → fluency null，overall 只按其他有效维度计算，不补零"""
+    answers = ["我熟悉智能驾驶仿真测试，主要用CANoe排查总线。"]
+    job_info = {"title": "智驾测试", "jd_digest": "...", "terms": ["CANoe"]}
+    mock_result = SingleScoringResult(
+        professional_match=SingleDimensionScore(score=90.0, evidence="熟悉智能驾驶仿真测试", reason="掌握"),
+        logic_structure=SingleDimensionScore(score=85.0, evidence="熟悉智能驾驶仿真测试", reason="清晰"),
+        job_competence=SingleDimensionScore(score=80.0, evidence="熟悉智能驾驶仿真测试", reason="良好"),
+        highlights=[], concerns=[], improvement=[],
+    )
+    with patch("server.services.scoring.call_scoring_llm", AsyncMock(side_effect=[mock_result, mock_result])):
+        report = await score_interview(answers=answers, job_info=job_info, mode="voice", acoustic_samples=[])
+    fluency = report["dimensions"]["expression_fluency"]
+    assert fluency["score"] is None
+    assert fluency["evidence"] is None
+    assert "声学数据不足" in fluency["reason"]
+    # overall 只算其他三维：(90+85+80)/3 = 85.0（fluency 不补零参与）
+    assert report["overall"] == 85.0

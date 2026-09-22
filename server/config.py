@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,6 +25,21 @@ class Settings(BaseSettings):
     tts_output_dir: str = Field("data/audio", validation_alias=AliasChoices("TTS_OUTPUT_DIR", "tts_output_dir"))
     tts_transition_lines: str = Field("嗯，我了解了|请继续|谢谢你的回答", validation_alias=AliasChoices("TTS_TRANSITION_LINES", "tts_transition_lines"))
     tts_timeout_s: float = Field(30.0, validation_alias=AliasChoices("TTS_TIMEOUT_S", "tts_timeout_s"))
+    # ASR（T5；键表见 docs/asr-implementation-spec.md §4；模型名/缓存目录/供应商必填，无默认）
+    asr_enabled: bool = Field(True, validation_alias=AliasChoices("ASR_ENABLED", "asr_enabled"))
+    asr_provider: Literal["funasr"] = Field(..., validation_alias=AliasChoices("ASR_PROVIDER", "asr_provider"))
+    asr_model_name: str = Field(..., validation_alias=AliasChoices("ASR_MODEL_NAME", "asr_model_name"))
+    asr_device: str = Field("cpu", validation_alias=AliasChoices("ASR_DEVICE", "asr_device"))
+    asr_model_cache_dir: str = Field(..., validation_alias=AliasChoices("ASR_MODEL_CACHE_DIR", "asr_model_cache_dir"))
+    asr_timeout_s: float = Field(120.0, validation_alias=AliasChoices("ASR_TIMEOUT_S", "asr_timeout_s"))
+    asr_max_upload_mb: int = Field(20, validation_alias=AliasChoices("ASR_MAX_UPLOAD_MB", "asr_max_upload_mb"))
+    asr_sample_rate: int = Field(16000, validation_alias=AliasChoices("ASR_SAMPLE_RATE", "asr_sample_rate"))
+    asr_temp_dir: str | None = Field(None, validation_alias=AliasChoices("ASR_TEMP_DIR", "asr_temp_dir"))
+    ffmpeg_path: str = Field("ffmpeg", validation_alias=AliasChoices("FFMPEG_PATH", "ffmpeg_path"))
+    ffprobe_path: str = Field("ffprobe", validation_alias=AliasChoices("FFPROBE_PATH", "ffprobe_path"))
+    xfyun_app_id: str | None = Field(None, validation_alias=AliasChoices("XFYUN_APP_ID", "xfyun_app_id"))
+    xfyun_api_key: str | None = Field(None, validation_alias=AliasChoices("XFYUN_API_KEY", "xfyun_api_key"))
+    xfyun_ws_url: str | None = Field(None, validation_alias=AliasChoices("XFYUN_WS_URL", "xfyun_ws_url"))
 
     @property
     def transition_lines_list(self) -> list[str]:
