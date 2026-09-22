@@ -13,3 +13,12 @@ data/*.sqlite3
 Thumbs.db
 data/audio/
 *.mp3
+
+.codegraph/
+.taromcp/
+.workbuddy/
+
+memory/*.md
+!memory/TESTING.md
+
+/命题*.pdf
