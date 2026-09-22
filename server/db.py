@@ -19,7 +19,16 @@ def ensure_schema_upgrades(target_engine=None):
                 conn.execute(text("ALTER TABLE sessions ADD COLUMN lease_token VARCHAR(64)"))
             if "lease_expires_at" not in cols:
                 conn.execute(text("ALTER TABLE sessions ADD COLUMN lease_expires_at DATETIME"))
-            conn.commit()
+            if "input_mode" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN input_mode VARCHAR(16)"))
+
+        result = conn.execute(text("PRAGMA table_info(reports)"))
+        report_cols = {row[1] for row in result.fetchall()}
+        if report_cols:
+            if "scoring_version" not in report_cols:
+                conn.execute(text("ALTER TABLE reports ADD COLUMN scoring_version VARCHAR(16)"))
+
+        conn.commit()
 
 def init_db(target_engine=None):
     from . import models

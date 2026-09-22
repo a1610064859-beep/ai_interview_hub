@@ -255,6 +255,21 @@
   - `ACCEPT_EXIT=0`；端口 `:18091` / `:34730` / `:9235` → CLEAN
 - 长评分断连恢复机制在合入后的 main 上已再验证；真人最终题全链路可作为 M2 关闭后的联调抽检项保留。
 
+## T7-G1-BE 成长追踪后端
+
+范围：学生身份归属、input_mode/scoring_version 列、成长只读 API、种子学生 3/4；不写 v1（待 ASR 规范化验收）。
+
+### 自动化
+
+| 项 | 状态 |
+| --- | --- |
+| tests/test_growth.py | 见本票门禁 |
+| 创建会话必填 user_id+mode | 旧请求体 422 |
+| 首答原子写 input_mode；混用 409 | text->voice 与 voice->text 双向 |
+| 同步 main 6f2facb（ASR CJK） | merge-base=6f2facb；保留双方 audio 测试 |
+| scoring_version 新报告保持 NULL | P8；测试用 fixture |
+| sid=5 | 不改写 |
+
 ## [T5-FIX] FunASR 中文字间空格规范化与评分证据恢复
 
 范围：仅 `server/services/asr.py` 增加 `normalize_asr_text`，在 `transcribe_wav` 返回前折叠 CJK–CJK 空白；不改 `validate_evidence`、不放宽 25 字、不动 sid=5、不写 `SCORING_VERSION`。文本答题不经过本函数。

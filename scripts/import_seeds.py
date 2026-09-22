@@ -5,7 +5,54 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.db import SessionLocal, init_db
-from server.models import Job, Question
+from server.models import Job, Question, User
+
+SEED_STUDENTS = (
+    {
+        "id": 3,
+        "role": "student",
+        "name_masked": "王*明",
+        "major": "车辆工程",
+        "grade": "大三",
+    },
+    {
+        "id": 4,
+        "role": "student",
+        "name_masked": "李*华",
+        "major": "智能车辆工程",
+        "grade": "大二",
+    },
+)
+
+
+class SeedStudentConflictError(RuntimeError):
+    """目标学生 ID 已存在但档案字段与演示种子不一致；禁止覆盖。"""
+
+
+def _ensure_seed_students(db) -> dict:
+    created = 0
+    existing = 0
+    conflicts = []
+    for spec in SEED_STUDENTS:
+        row = db.query(User).filter(User.id == spec["id"]).first()
+        if row is None:
+            db.add(User(**spec))
+            created += 1
+            continue
+        mismatched = {
+            field: {"expected": spec[field], "actual": getattr(row, field)}
+            for field in ("role", "name_masked", "major", "grade")
+            if getattr(row, field) != spec[field]
+        }
+        if mismatched:
+            conflicts.append({"id": spec["id"], "mismatched": mismatched})
+        else:
+            existing += 1
+    if conflicts:
+        raise SeedStudentConflictError(
+            "种子学生档案冲突，拒绝覆盖: " + json.dumps(conflicts, ensure_ascii=False)
+        )
+    return {"students_created": created, "students_existing": existing}
 
 
 def import_seeds(seed_path=None, db=None) -> dict:
@@ -28,9 +75,14 @@ def import_seeds(seed_path=None, db=None) -> dict:
         "jobs_updated": 0,
         "questions_created": 0,
         "questions_updated": 0,
+        "students_created": 0,
+        "students_existing": 0,
     }
 
     try:
+        student_stats = _ensure_seed_students(db)
+        stats.update(student_stats)
+
         for item in data:
             family = item["family"]
             title = item["title"]
@@ -82,11 +134,18 @@ def import_seeds(seed_path=None, db=None) -> dict:
 
         db.commit()
         return stats
+    except Exception:
+        db.rollback()
+        raise
     finally:
         if close_db_when_done:
             db.close()
 
 
 if __name__ == "__main__":
-    result = import_seeds()
+    try:
+        result = import_seeds()
+    except SeedStudentConflictError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
     print(f"Seeds imported successfully: {result}")
