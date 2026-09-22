@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { VoiceRecorder, type VoiceRecording } from "../lib/recorder";
+
 const TOTAL_QUESTIONS = 6;
 const MOCK_FOLLOWUP_SEQ = 2;
 const MIN_ANSWER_LEN = 1;
@@ -60,6 +62,142 @@ export default function HomePage() {
   const [answerHint, setAnswerHint] = useState<string | null>(null);
   const createLock = useRef(false);
   const submitLock = useRef(false);
+
+  const recorderRef = useRef<VoiceRecorder | null>(null);
+  const levelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [voicePhase, setVoicePhase] = useState<"idle" | "recording" | "sending">("idle");
+  const [level, setLevel] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [voiceMeta, setVoiceMeta] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (levelTimerRef.current !== null) {
+        clearInterval(levelTimerRef.current);
+        levelTimerRef.current = null;
+      }
+      recorderRef.current?.dispose();
+      recorderRef.current = null;
+    };
+  }, []);
+
+  function stopLevelTimer() {
+    if (levelTimerRef.current !== null) {
+      clearInterval(levelTimerRef.current);
+      levelTimerRef.current = null;
+    }
+  }
+
+  async function startRecording() {
+    if (view.phase !== "interview" || view.mode !== "real" || voicePhase !== "idle" || busy || hold) {
+      return;
+    }
+    try {
+      const rec = await VoiceRecorder.create();
+      rec.start();
+      recorderRef.current = rec;
+      setVoicePhase("recording");
+      setVoiceMeta(null);
+      setNotice(null);
+      levelTimerRef.current = setInterval(() => {
+        setLevel(rec.level01);
+        setElapsed(rec.elapsedS);
+      }, 100);
+    } catch (error) {
+      setNotice(formatMicError(error));
+    }
+  }
+
+  async function stopRecordingAndSend() {
+    const rec = recorderRef.current;
+    if (!rec || view.phase !== "interview" || view.mode !== "real" || voicePhase !== "recording") {
+      return;
+    }
+    stopLevelTimer();
+    setVoicePhase("sending");
+    setLevel(0);
+    let recording: VoiceRecording;
+    try {
+      recording = await rec.stop();
+    } catch {
+      recorderRef.current = null;
+      setVoicePhase("idle");
+      setNotice("录音结束处理失败，请重新录音。");
+      return;
+    }
+    recorderRef.current = null;
+    setVoiceMeta(`本次录音：时长 ${recording.durationS} 秒 · 停顿 ${recording.pauseCnt} 次`);
+    await submitAudioAnswer(view, recording);
+  }
+
+  async function submitAudioAnswer(
+    view: Extract<View, { phase: "interview"; mode: "real" }>,
+    recording: VoiceRecording,
+  ) {
+    const result = await requestAudioAnswer(
+      view.sid,
+      recording.blob,
+      recording.durationS,
+      recording.pauseCnt,
+    );
+    setVoicePhase("idle");
+
+    if (result.kind === "network") {
+      setHold(true);
+      setNotice("网络失败，无法确认语音回答是否已提交。结果不明，请刷新确认后再试。未自动重发。");
+      return;
+    }
+    if (result.kind === "http") {
+      const code = result.code ?? "";
+      if (code === "ANSWER_IN_PROGRESS") {
+        setHold(true);
+        setNotice(
+          formatApiError(result, "语音提交失败", "结果不明，请刷新确认后再试。未自动重发。"),
+        );
+        return;
+      }
+      if (
+        code === "ASR_UNAVAILABLE" ||
+        code === "AUDIO_PROCESS_FAILED" ||
+        code === "SCORING_UNAVAILABLE"
+      ) {
+        setBusy(false);
+        setNotice(
+          formatApiError(result, "语音提交失败", "服务暂时不可用，请稍后重新录音再试。未自动重发。"),
+        );
+        return;
+      }
+      if (code === "AUDIO_INVALID" || code === "AUDIO_TOO_LARGE") {
+        setBusy(false);
+        setNotice(formatApiError(result, "语音提交失败", "录音未被接受，请重新录音。"));
+        return;
+      }
+      setBusy(false);
+      setNotice(formatApiError(result, "语音提交失败", "未推进题目。未自动重试。"));
+      return;
+    }
+    if (result.kind === "invalid") {
+      setHold(true);
+      setNotice(`${result.message} 结果不明，请刷新确认后再试。未自动重发。`);
+      return;
+    }
+
+    if (result.value.type === "done") {
+      router.push(`/reports/${view.sid}`);
+      return;
+    }
+
+    setView({
+      phase: "interview",
+      mode: "real",
+      job: view.job,
+      sid: view.sid,
+      question: result.value.question,
+      isFollowup: result.value.type === "followup",
+    });
+    setVoiceMeta(null);
+    setBusy(false);
+  }
 
   useEffect(() => {
     const mode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
@@ -302,12 +440,22 @@ export default function HomePage() {
           notice={notice}
           busy={busy}
           hold={hold}
+          voicePhase={voicePhase}
+          level={level}
+          elapsed={elapsed}
+          voiceMeta={voiceMeta}
           onAnswerChange={(value) => {
             setAnswerText(value);
             setAnswerHint(null);
           }}
           onSubmit={() => {
             void submitAnswer();
+          }}
+          onStartRecording={() => {
+            void startRecording();
+          }}
+          onStopSendRecording={() => {
+            void stopRecordingAndSend();
           }}
         />
       ) : null}
@@ -337,8 +485,14 @@ function InterviewPanel({
   notice,
   busy,
   hold,
+  voicePhase,
+  level,
+  elapsed,
+  voiceMeta,
   onAnswerChange,
   onSubmit,
+  onStartRecording,
+  onStopSendRecording,
 }: {
   mode: ApiMode;
   job: Job;
@@ -350,8 +504,14 @@ function InterviewPanel({
   notice: string | null;
   busy: boolean;
   hold: boolean;
+  voicePhase: "idle" | "recording" | "sending";
+  level: number;
+  elapsed: number;
+  voiceMeta: string | null;
   onAnswerChange: (value: string) => void;
   onSubmit: () => void;
+  onStartRecording: () => void;
+  onStopSendRecording: () => void;
 }) {
   const trimmedLen = answerText.trim().length;
 
@@ -389,12 +549,70 @@ function InterviewPanel({
         </p>
       ) : null}
 
+      {mode === "real" ? (
+        <div className="mt-6 rounded-2xl border border-[#1d4ed8]/60 bg-[#070b14] p-4">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+            <span className="text-sm text-[#9fb4d4]">
+              语音回答（webm/opus，随录音提交时长与停顿统计）
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-9 w-9 items-center justify-center">
+                <span
+                  className="absolute inset-0 rounded-full border border-[#2f6fed]/70"
+                  style={{
+                    transform: `scale(${1 + level * 0.7})`,
+                    boxShadow: `0 0 ${8 + level * 24}px rgba(47,111,237,${0.3 + level * 0.5})`,
+                    transition: "transform 90ms linear",
+                  }}
+                />
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ background: voicePhase === "recording" && level > 0.05 ? "#ff8a2a" : "#2f6fed" }}
+                />
+              </span>
+              {voicePhase === "recording" ? (
+                <span className="text-sm text-[#ffb067]">{elapsed.toFixed(1)}s</span>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={busy || hold || voicePhase !== "idle"}
+              onClick={onStartRecording}
+            >
+              开始录音
+            </button>
+            {voicePhase === "recording" ? (
+              <button
+                type="button"
+                className="max-w-full rounded-full border border-[#ff5a5a] bg-[#2a0d0d] px-4 py-2 text-sm font-medium text-[#ffb0b0]"
+                onClick={onStopSendRecording}
+              >
+                停止并发送
+              </button>
+            ) : null}
+            {voicePhase === "sending" ? (
+              <span className="text-sm text-[#7eb6ff]" role="status">
+                正在上传与识别…（首次可能较久，请勿关闭页面）
+              </span>
+            ) : null}
+          </div>
+          {voiceMeta ? (
+            <p className="mt-2 break-anywhere text-xs text-[#b7c8e2]" role="status">
+              {voiceMeta}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <label className="mt-6 block min-w-0 max-w-full">
         <span className="text-sm text-[#9fb4d4]">文本回答</span>
         <textarea
           className="mt-2 min-h-36 w-full max-w-full resize-y rounded-2xl border border-[#2f6fed] bg-[#070b14] px-4 py-3 text-sm leading-6 text-white outline-none focus:border-[#ff8a2a]"
           value={answerText}
-          disabled={busy || hold}
+          disabled={busy || hold || voicePhase !== "idle"}
           onChange={(event) => {
             onAnswerChange(event.target.value);
           }}
@@ -412,10 +630,10 @@ function InterviewPanel({
       <button
         type="button"
         className="mt-4 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={busy || hold}
+        disabled={busy || hold || voicePhase !== "idle"}
         onClick={onSubmit}
       >
-        {busy ? "正在提交…" : "提交回答"}
+        {busy ? "正在提交…" : "提交文本回答"}
       </button>
     </section>
   );
@@ -709,6 +927,62 @@ async function requestTextAnswer(sid: number, answerText: string): Promise<TextA
     return { kind: "invalid", message: parsed.message };
   }
   return { kind: "ok", value: parsed.value };
+}
+
+type AudioAnswerResult = TextAnswerResult;
+
+/**
+ * 语音答题：multipart 提交 webm/opus 与客户端声学统计（duration_s/pause_cnt）。
+ * 不设置 Content-Type（由浏览器自动带 multipart boundary）。
+ */
+async function requestAudioAnswer(
+  sid: number,
+  blob: Blob,
+  durationS: number,
+  pauseCnt: number,
+): Promise<AudioAnswerResult> {
+  const form = new FormData();
+  form.append("audio", new File([blob], "answer.webm", { type: blob.type || "audio/webm" }));
+  form.append("duration_s", durationS.toFixed(1));
+  form.append("pause_cnt", String(pauseCnt));
+
+  let response: Response;
+  try {
+    response = await fetch(`/api/sessions/${sid}/answers`, {
+      method: "POST",
+      body: form,
+      cache: "no-store",
+    });
+  } catch {
+    return { kind: "network" };
+  }
+  if (!response.ok) {
+    const info = await readApiError(response);
+    return { kind: "http", ...info };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { kind: "invalid", message: "语音回答响应不是合法 JSON。未推进题目。" };
+  }
+  const parsed = parseAnswerResponse(payload);
+  if (!parsed.ok) {
+    return { kind: "invalid", message: parsed.message };
+  }
+  return { kind: "ok", value: parsed.value };
+}
+
+function formatMicError(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      return "麦克风权限被拒绝。请在浏览器地址栏允许麦克风后重新开始录音。";
+    }
+    if (error.name === "NotFoundError" || error.name === "OverconstrainedError") {
+      return "未检测到可用麦克风设备，无法进行语音回答。";
+    }
+  }
+  return "麦克风初始化失败，请检查设备后重试。";
 }
 
 function parseJobs(payload: unknown): ParseOk<Job[]> | ParseErr {
