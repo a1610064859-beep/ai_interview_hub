@@ -7,7 +7,7 @@
 | 基线 | main `fdd74a1`（= T5-P0 `1788674` 合入后的 main；main 同期已通过验收合入 T4 TTS 预取 `757a62f`） |
 | 前置输入 | `docs/asr-preflight.md`（T5-P0 实测：ffmpeg 8.1 就绪；系统 Python 3.11.9 可用；funasr/torch 全缺；RTX 3070 Ti 8GB；C 盘余 14G） |
 | 状态 | **待队长审批**。§5 API 细则、§1 依赖、§4 配置键、§6 文件边界均"批准后才可施工" |
-| 修订记录 | v1=`d677712` 初稿；v2=按 Astra 审查修订：①输入内容损坏（含截断/内部损坏）统一 422 AUDIO_INVALID，503 仅限环境缺失败；②删除 ASR_DISABLED，关闭 ASR 统一 503 ASR_UNAVAILABLE；③ASR_MODEL_NAME/ASR_MODEL_CACHE_DIR 改必填无默认；④ASR_PROVIDER 锁定 funasr，讯飞登记为后续缺口；⑤Dockerfile 改列待批扩界；⑥删除 prepare_asr_model.py 申请；⑦CUDA 失败自动回退 CPU 定稿；⑧验收 F 更名"并发重复请求不重复推进" |
+| 修订记录 | v1=`d677712` 初稿；v2=按 Astra 审查修订：①输入内容损坏（含截断/内部损坏）统一 422 AUDIO_INVALID，503 仅限环境缺失败；②删除 ASR_DISABLED，关闭 ASR 统一 503 ASR_UNAVAILABLE；③ASR_MODEL_NAME/ASR_MODEL_CACHE_DIR 改必填无默认；④ASR_PROVIDER 锁定 funasr，讯飞登记为后续缺口；⑤Dockerfile 改列待批扩界；⑥删除 prepare_asr_model.py 申请；⑦CUDA 失败自动回退 CPU 定稿；⑧验收 F 更名"并发重复请求不重复推进"；v3=错误分类弃用 stderr 文案匹配，改阶段判定（魔数初筛→ffprobe 解析→ffmpeg 转码→可执行性），stderr 仅作日志诊断，验收 D 增至三类损坏样本 |
 
 **标记约定**：`[已验证]`=官方包元数据/官方索引/本机实测取证；`[未验证]`=未实测、禁止据此宣称；`[待批]`=本规格申请、队长批准前不得实施。
 
@@ -157,7 +157,7 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 | --- | --- | --- | --- | --- |
 | 并发/状态 | 404 `SESSION_NOT_FOUND`；409 `SESSION_COMPLETED` / `ANSWER_IN_PROGRESS` / `SESSION_RESET_REQUIRED` | 复用现有语义 | 否 | 409 视情况 |
 | 上传校验（租约前，廉价检查不占锁） | 422 字段校验；422 `AUDIO_INVALID`（魔数不符/过短）；413 `AUDIO_TOO_LARGE` | 客户端输入问题 | 否 | 修正后重试 |
-| 转码/内容损坏 | 422 `AUDIO_INVALID`；503 `AUDIO_PROCESS_FAILED` | **判据定稿**：ffprobe/ffmpeg 失败时，stderr 含 `Invalid data found when processing input` 或 `EBML header parsing failed` → 判**输入内容损坏**（魔数初筛无法覆盖的截断、内部损坏），一律 422 `AUDIO_INVALID`；其余失败（`FFMPEG_PATH` 不可执行/FileNotFoundError、`Unknown decoder` 等编解码或环境缺失）→ 503 `AUDIO_PROCESS_FAILED`。P0 实测损坏输入（退出码 183 + Invalid data 文案）按此归 422 | 否（释放租约回 active） | 422 须更换文件后重试；503 可原样重试 |
+| 转码/内容损坏 | 422 `AUDIO_INVALID`；503 `AUDIO_PROCESS_FAILED` | **阶段判定（stderr 只记日志与诊断，不作为业务分类依据）**：① 魔数初筛不符 → 422 `AUDIO_INVALID`；② `ffprobe` 可执行但对上传文件返回非零（无法解析容器/音频流，覆盖各类截断与内部损坏，无论错误文案是 `Invalid data`、`End of file` 还是其他）→ 422 `AUDIO_INVALID`；③ `ffprobe` 通过后 `ffmpeg` 转码仍失败 → 503 `AUDIO_PROCESS_FAILED`；④ ffprobe/ffmpeg 不存在、无执行权限或启动失败（FileNotFoundError/PermissionError 等）→ 503 `AUDIO_PROCESS_FAILED`。P0 实测损坏输入（退出码 183）落阶段②归 422 | 否（释放租约回 active） | 422 须更换文件后重试；503 可原样重试 |
 | ASR | 503 `ASR_UNAVAILABLE` | funasr 异常/超时/未加载 | 否（释放租约回 active） | 是 |
 
 ### 5.5 重试与防重复推进
@@ -195,7 +195,7 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 | A | 真实 webm/opus → 16k 单声道 wav | `ffmpeg -hide_banner -loglevel error -y -i sample.webm -ac 1 -ar 16000 -c:a pcm_s16le out.wav; if ($LASTEXITCODE -ne 0) { throw "ffmpeg $LASTEXITCODE" }`；`ffprobe -v error -show_entries stream=codec_name,sample_rate,channels -of default=nw=1 out.wav \| Select-Object -First 10` | 退出码 0；`pcm_s16le/16000/1` |
 | B | 真实中文短音频非空转写（`ASR_ACCEPTANCE_REAL=1` 门控，模型缓存就绪后跑） | 服务内对真实 wav 调 `transcribe`；`$LASTEXITCODE` 记录 | 已知中文语音 → 非空文本，语义人工比对；失败判据=空文本/异常退出 |
 | C | duration_s/wpm/pause_cnt/filler_cnt 正确 | 定长样本+已知文本提交后查 answers 行 | `duration_s`=提交值；`wpm == round(去空白转写字数/duration_s×60, 1)`；`pause_cnt`=提交值；`filler_cnt`=正则计数 |
-| D | 损坏文件明确失败且不推进会话 | 提交两类样本：①魔数非法文件；②EBML 魔数正确但内容截断/内部损坏（如合法 webm 头部拼接随机尾部） | 两类**均 422 `AUDIO_INVALID`**（判据见 §5.4，不再二选一 503）；session 仍 `active`；answers 计数不变 |
+| D | 损坏文件明确失败且不推进会话 | 提交至少三类样本：①魔数非法文件；②**头部截断**（丢弃 webm 前 1KB）；③**中部破坏**（数据段翻转/替换若干字节）。②③构造后先经 ffprobe 验证解析失败 | ①②③**均稳定返回 422 `AUDIO_INVALID`**（阶段判定 §5.4）；session 仍 `active`；answers 计数不变。边界记录：尾部截断（cue 区丢失）可能通过 ffprobe 而在 ffmpeg 阶段失败，按阶段规则归 503，不作为 D 的 422 样本 [未验证，施工时实测归档] |
 | E | ASR 异常不产生 Answer | monkeypatch `transcribe` 抛异常 | 503 `ASR_UNAVAILABLE`；answers 计数不变；session 回 `active`、租约清空 |
 | F | 并发重复请求不重复推进 | 并发两个相同请求（或首请求处理中再发；成功后的重发防护属客户端契约 §5.5-3，不入本用例） | 第二请求 409 `ANSWER_IN_PROGRESS`；answers 计数恰 +1 |
 | G | 临时 wav 必清理 | 请求成功与失败路径各跑一次后检查 `ASR_TEMP_DIR` | 目录无残留 .wav（实现：finally 删除，对齐 T4 临时文件清理风格） |
@@ -229,6 +229,7 @@ if ($LASTEXITCODE -ne 0) { throw "模型下载失败: $LASTEXITCODE" } | Select-
 6. `MODELSCOPE_CACHE` 对 funasr 下载路径的实际约束力（cache_dir 参数为主，前者为辅）。
 7. 讯飞 WS 备用链路的一切能力（无凭据、未调研，仅占位键）。
 8. T5-P0 遗留：审查所见 `.venv` 启动失败场景（复测未复现）；T5 施工以重建后 venv 为准。
+9. 尾部截断（EBML cue 区丢失）类损坏通过 ffprobe 探测、在 ffmpeg 阶段失败的具体行为——按 §5.4 阶段规则归 503 `AUDIO_PROCESS_FAILED`，T5 施工构造验收样本时实测归档。
 
 ## 10. 未解决事项
 
