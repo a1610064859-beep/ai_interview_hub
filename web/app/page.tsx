@@ -3,10 +3,27 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import {
+  VoiceRecorder,
+  type VoiceRecording,
+  parseSessionResponse,
+  parseAnswerResponse,
+  type SessionCreateData,
+  type AnswerData,
+  pickTransitionAudioUrl,
+  ActionLock,
+  TransitionAudioTracker,
+  QuestionAudioPlayer,
+} from "../lib/recorder";
+
 const TOTAL_QUESTIONS = 6;
 const MOCK_FOLLOWUP_SEQ = 2;
 const MIN_ANSWER_LEN = 1;
 const MAX_ANSWER_LEN = 5000;
+/** 进入面试舱的过场动画时长（AGENTS §9）。 */
+const TRANSITION_MS = 1500;
+/** 设备自检录音时长（秒，AGENTS §9：录 3s 回放）。 */
+const SELF_CHECK_SECONDS = 3;
 
 type ApiMode = "mock" | "real";
 
@@ -23,12 +40,23 @@ type Question = {
   seq: number;
 };
 
+type AnswerLogEntry = {
+  key: string;
+  seq: number;
+  kind: "voice" | "text";
+  durationS?: number;
+  pauseCnt?: number;
+  isFollowup: boolean;
+};
+
 type View =
   | { phase: "config"; message: string }
   | { phase: "loading" }
   | { phase: "empty" }
   | { phase: "error"; message: string }
   | { phase: "jobs"; mode: ApiMode; jobs: Job[] }
+  | { phase: "device_check"; job: Job }
+  | { phase: "transition"; mode: ApiMode; job: Job }
   | {
       phase: "interview";
       mode: "mock";
@@ -44,11 +72,16 @@ type View =
       sid: number;
       question: Question;
       isFollowup: boolean;
+      startedAtMs: number;
+      transitionAudioUrls: string[];
+      transitionAudioUrl: string | null;
     }
   | { phase: "mock_done"; job: Job };
 
 type ParseOk<T> = { ok: true; value: T };
 type ParseErr = { ok: false; message: string };
+
+type RealInterviewView = Extract<View, { phase: "interview"; mode: "real" }>;
 
 export default function HomePage() {
   const router = useRouter();
@@ -60,6 +93,16 @@ export default function HomePage() {
   const [answerHint, setAnswerHint] = useState<string | null>(null);
   const createLock = useRef(false);
   const submitLock = useRef(false);
+  const [answerLog, setAnswerLog] = useState<AnswerLogEntry[]>([]);
+
+  const recorderRef = useRef<VoiceRecorder | null>(null);
+  const levelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [voicePhase, setVoicePhase] = useState<"idle" | "recording" | "sending">("idle");
+  const [level, setLevel] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [voiceMeta, setVoiceMeta] = useState<string | null>(null);
+  const voiceSubmitLockRef = useRef(false);
+  const transitionTrackerRef = useRef(new TransitionAudioTracker());
 
   useEffect(() => {
     const mode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
@@ -86,6 +129,39 @@ export default function HomePage() {
     };
   }, []);
 
+  // 组件卸载时释放录音与计时资源
+  useEffect(() => {
+    return () => {
+      stopLevelTimer();
+      recorderRef.current?.dispose();
+      recorderRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function stopLevelTimer() {
+    if (levelTimerRef.current !== null) {
+      clearInterval(levelTimerRef.current);
+      levelTimerRef.current = null;
+    }
+  }
+
+  function resetSessionState() {
+    setAnswerText("");
+    setAnswerHint(null);
+    setAnswerLog([]);
+    setVoicePhase("idle");
+    setVoiceMeta(null);
+    setLevel(0);
+    setElapsed(0);
+    setHold(false);
+    setNotice(null);
+    transitionTrackerRef.current.reset();
+    voiceSubmitLockRef.current = false;
+    submitLock.current = false;
+    // 注意：resetSessionState 绝不得修改 createLock！只能在失败路径释放（AGENTS 审查项 1）
+  }
+
   async function choose(mode: ApiMode, job: Job) {
     if (createLock.current) {
       return;
@@ -94,9 +170,26 @@ export default function HomePage() {
     setBusy(true);
     setNotice(null);
     setAnswerHint(null);
+    resetSessionState();
 
     if (mode === "mock") {
-      setAnswerText("");
+      // mock 为纯前端演示，跳过设备自检，仅保留 1.5s 过场
+      await enterInterview(mode, job);
+      return;
+    }
+
+    // real 模式：先做 3 秒设备自检（录 3s → 回放 → 确认），通过后才进入面试舱
+    setView({ phase: "device_check", job });
+    setBusy(false);
+  }
+
+  async function enterInterview(mode: ApiMode, job: Job) {
+    // 1.5s 座舱过场（AGENTS §9）；real 模式同时并行创建会话
+    setView({ phase: "transition", mode, job });
+    const transition = sleep(TRANSITION_MS);
+
+    if (mode === "mock") {
+      await transition;
       setView({
         phase: "interview",
         mode: "mock",
@@ -109,27 +202,29 @@ export default function HomePage() {
       return;
     }
 
-    const result = await requestRealSession(job.id);
+    const [result] = await Promise.all([requestRealSession(job.id), transition]);
     if (result.kind === "network") {
-      setBusy(false);
-      setHold(true);
-      setNotice("网络失败，无法确认会话是否已创建。未自动重试。请刷新页面后再试。");
+      createLock.current = false; // 失败路径释放锁，允许重新选岗或重试
+      setView({
+        phase: "error",
+        message: "网络失败，无法确认会话是否已创建。未自动重试。请刷新页面后再试。",
+      });
       return;
     }
     if (result.kind === "http") {
-      createLock.current = false;
-      setBusy(false);
-      setNotice(formatApiError(result, "创建会话失败", "未进入面试，未自动重试。"));
+      createLock.current = false; // 失败路径释放锁
+      setView({
+        phase: "error",
+        message: formatApiError(result, "创建会话失败", "未进入面试，未自动重试。请刷新页面后再试。"),
+      });
       return;
     }
     if (result.kind === "invalid") {
-      createLock.current = false;
-      setBusy(false);
-      setNotice(result.message);
+      createLock.current = false; // 失败路径释放锁
+      setView({ phase: "error", message: result.message });
       return;
     }
 
-    setAnswerText("");
     setView({
       phase: "interview",
       mode: "real",
@@ -137,7 +232,172 @@ export default function HomePage() {
       sid: result.sid,
       question: result.question,
       isFollowup: false,
+      startedAtMs: Date.now(),
+      transitionAudioUrls: result.transitionAudioUrls,
+      transitionAudioUrl: null,
     });
+    setBusy(false);
+  }
+
+  function sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function playTransitionAudio(urls: string[], answerCount: number) {
+    const url = transitionTrackerRef.current.onSubmissionPlay(urls, answerCount);
+    if (!url) {
+      return;
+    }
+    try {
+      const audio = new Audio(url);
+      audio.play().catch(() => undefined);
+    } catch {
+      // 浏览器 autoplay 限制或环境不支持静默降级
+    }
+  }
+
+  async function startRecording() {
+    if (
+      view.phase !== "interview" ||
+      view.mode !== "real" ||
+      voicePhase !== "idle" ||
+      busy ||
+      hold ||
+      voiceSubmitLockRef.current
+    ) {
+      return;
+    }
+    try {
+      const rec = await VoiceRecorder.create();
+      rec.start();
+      recorderRef.current = rec;
+      setVoicePhase("recording");
+      setVoiceMeta(null);
+      setNotice(null);
+      levelTimerRef.current = setInterval(() => {
+        setLevel(rec.level01);
+        setElapsed(rec.elapsedS);
+      }, 100);
+    } catch (error) {
+      setNotice(formatMicError(error));
+    }
+  }
+
+  async function stopRecordingAndSend() {
+    // 同步 ref 锁：快速双击「停止并发送」只执行一次停止与上传
+    if (voiceSubmitLockRef.current) {
+      return;
+    }
+    const rec = recorderRef.current;
+    if (!rec || view.phase !== "interview" || view.mode !== "real" || voicePhase !== "recording") {
+      return;
+    }
+    voiceSubmitLockRef.current = true;
+    stopLevelTimer();
+    setVoicePhase("sending");
+    setLevel(0);
+    let recording: VoiceRecording;
+    try {
+      recording = await rec.stop();
+    } catch {
+      recorderRef.current = null;
+      setVoicePhase("idle");
+      voiceSubmitLockRef.current = false;
+      setNotice("录音结束处理失败，请重新录音。");
+      return;
+    }
+    recorderRef.current = null;
+    setVoiceMeta(`本次录音：时长 ${recording.durationS} 秒 · 停顿 ${recording.pauseCnt} 次`);
+    // 提交回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖 ASR 与大模型时延（AGENTS §6.2）
+    playTransitionAudio(view.transitionAudioUrls, answerLog.length);
+    await submitAudioAnswer(view, recording);
+  }
+
+  async function submitAudioAnswer(view: RealInterviewView, recording: VoiceRecording) {
+    const result = await requestAudioAnswer(
+      view.sid,
+      recording.blob,
+      recording.durationS,
+      recording.pauseCnt,
+    );
+    setVoicePhase("idle");
+
+    if (result.kind === "network") {
+      // 结果不明：保持锁页与 ref 锁，绝不自动重发
+      setHold(true);
+      setNotice("网络失败，无法确认语音回答是否已提交。结果不明，请刷新确认后再试。未自动重发。");
+      return;
+    }
+    if (result.kind === "http") {
+      const code = result.code ?? "";
+      if (code === "ANSWER_IN_PROGRESS") {
+        setHold(true);
+        setNotice(
+          formatApiError(result, "语音提交失败", "结果不明，请刷新确认后再试。未自动重发。"),
+        );
+        return;
+      }
+      if (
+        code === "ASR_UNAVAILABLE" ||
+        code === "AUDIO_PROCESS_FAILED" ||
+        code === "SCORING_UNAVAILABLE"
+      ) {
+        voiceSubmitLockRef.current = false;
+        setBusy(false);
+        setNotice(
+          formatApiError(result, "语音提交失败", "服务暂时不可用，请稍后重新录音再试。未自动重发。"),
+        );
+        return;
+      }
+      if (code === "AUDIO_INVALID" || code === "AUDIO_TOO_LARGE") {
+        voiceSubmitLockRef.current = false;
+        setBusy(false);
+        setNotice(formatApiError(result, "语音提交失败", "录音未被接受，请重新录音。"));
+        return;
+      }
+      voiceSubmitLockRef.current = false;
+      setBusy(false);
+      setNotice(formatApiError(result, "语音提交失败", "未推进题目。未自动重试。"));
+      return;
+    }
+    if (result.kind === "invalid") {
+      setHold(true);
+      setNotice(`${result.message} 结果不明，请刷新确认后再试。未自动重发。`);
+      return;
+    }
+
+    setAnswerLog((log) => [
+      ...log,
+      {
+        key: `${view.question.seq}-voice-${Date.now()}`,
+        seq: view.question.seq,
+        kind: "voice",
+        durationS: recording.durationS,
+        pauseCnt: recording.pauseCnt,
+        isFollowup: view.isFollowup,
+      },
+    ]);
+
+    if (result.value.type === "done") {
+      voiceSubmitLockRef.current = false;
+      // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
+      router.push(`/reports/${view.sid}`);
+      return;
+    }
+
+    setView({
+      phase: "interview",
+      mode: "real",
+      job: view.job,
+      sid: view.sid,
+      question: result.value.question,
+      isFollowup: result.value.type === "followup",
+      startedAtMs: view.startedAtMs,
+      transitionAudioUrls: view.transitionAudioUrls,
+      transitionAudioUrl: result.value.transitionAudioUrl,
+    });
+    setVoiceMeta(null);
+    voiceSubmitLockRef.current = false;
     setBusy(false);
   }
 
@@ -176,6 +436,10 @@ export default function HomePage() {
       return;
     }
 
+    const seq = view.question.seq;
+    const wasFollowup = view.isFollowup;
+    // 提交文本回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖大模型时延（AGENTS §6.2）
+    playTransitionAudio(view.transitionAudioUrls, answerLog.length);
     const result = await requestTextAnswer(view.sid, normalized);
     if (result.kind === "network") {
       setBusy(false);
@@ -217,6 +481,16 @@ export default function HomePage() {
       return;
     }
 
+    setAnswerLog((log) => [
+      ...log,
+      {
+        key: `${seq}-text-${Date.now()}`,
+        seq,
+        kind: "text",
+        isFollowup: wasFollowup,
+      },
+    ]);
+
     if (result.value.type === "done") {
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
       router.push(`/reports/${view.sid}`);
@@ -230,18 +504,39 @@ export default function HomePage() {
       sid: view.sid,
       question: result.value.question,
       isFollowup: result.value.type === "followup",
+      startedAtMs: view.startedAtMs,
+      transitionAudioUrls: view.transitionAudioUrls,
+      transitionAudioUrl: result.value.transitionAudioUrl,
     });
     setAnswerText("");
     submitLock.current = false;
     setBusy(false);
   }
 
+  // 过渡语自动播放（响应返回兜底）：若提交时已立即播放，TransitionAudioTracker 严格拒绝二次重复播放（AGENTS 审查项 3）
+  useEffect(() => {
+    if (view.phase !== "interview" || view.mode !== "real") {
+      return;
+    }
+    const urlToPlay = transitionTrackerRef.current.shouldPlayOnResponse(view.transitionAudioUrl);
+    if (!urlToPlay) {
+      return;
+    }
+    try {
+      new Audio(urlToPlay).play().catch(() => undefined);
+    } catch {
+      // 静默降级
+    }
+  }, [view]);
+
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
       <header className="mb-8 min-w-0 max-w-full">
         <p className="text-sm tracking-[0.18em] text-[#7eb6ff]">智能汽车座舱</p>
         <h1 className="mt-2 text-3xl font-semibold text-white">智驾未来 · AI面试仓</h1>
-        <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">选择岗位，文本作答，查看首题与进度。</p>
+        <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">
+          选择岗位，语音或文本作答，查看首题与进度。
+        </p>
       </header>
 
       {view.phase === "config" ? <MessagePanel title="配置错误" message={view.message} /> : null}
@@ -282,11 +577,33 @@ export default function HomePage() {
                     void choose(view.mode, job);
                   }}
                 >
-                  {busy ? "正在创建会话…" : "选择此岗位"}
+                  {view.mode === "real" ? "选择并自检设备" : "选择此岗位"}
                 </button>
               </article>
             ))}
           </div>
+        </section>
+      ) : null}
+
+      {view.phase === "device_check" ? (
+        <DeviceCheckPanel
+          job={view.job}
+          onPass={() => {
+            void enterInterview("real", view.job);
+          }}
+        />
+      ) : null}
+
+      {view.phase === "transition" ? (
+        <section
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#050912]/95"
+          role="status"
+        >
+          <div className="cockpit-sweep h-40 w-40 rounded-full border-2 border-[#2f6fed]" />
+          <p className="mt-8 text-lg text-white">正在进入面试舱…</p>
+          <p className="mt-2 text-sm text-[#9fb4d4]">
+            {view.mode === "real" ? "设备自检已通过 · 会话建立中" : "演示模式 · 非正式数据"}
+          </p>
         </section>
       ) : null}
 
@@ -297,17 +614,29 @@ export default function HomePage() {
           question={view.question}
           isFollowup={view.isFollowup}
           sid={view.mode === "real" ? view.sid : null}
+          startedAtMs={view.mode === "real" ? view.startedAtMs : null}
           answerText={answerText}
           answerHint={answerHint}
           notice={notice}
           busy={busy}
           hold={hold}
+          voicePhase={voicePhase}
+          level={level}
+          elapsed={elapsed}
+          voiceMeta={voiceMeta}
+          answerLog={answerLog}
           onAnswerChange={(value) => {
             setAnswerText(value);
             setAnswerHint(null);
           }}
           onSubmit={() => {
             void submitAnswer();
+          }}
+          onStartRecording={() => {
+            void startRecording();
+          }}
+          onStopSendRecording={() => {
+            void stopRecordingAndSend();
           }}
         />
       ) : null}
@@ -326,98 +655,534 @@ export default function HomePage() {
   );
 }
 
+function DeviceCheckPanel({
+  job,
+  onPass,
+}: {
+  job: Job;
+  onPass: () => void;
+}) {
+  const [status, setStatus] = useState<
+    "idle" | "recording" | "playing" | "confirm" | "playback_failed"
+  >("idle");
+  const [message, setMessage] = useState<string | null>(null);
+  const recorderRef = useRef<VoiceRecorder | null>(null);
+  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackUrlRef = useRef<string | null>(null);
+  const beginLockRef = useRef(false);
+  const passLockRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (stopTimerRef.current !== null) {
+        clearTimeout(stopTimerRef.current);
+      }
+      recorderRef.current?.dispose();
+      recorderRef.current = null;
+      if (playbackUrlRef.current) {
+        URL.revokeObjectURL(playbackUrlRef.current);
+        playbackUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  async function begin() {
+    if (beginLockRef.current || status === "recording") {
+      return;
+    }
+    beginLockRef.current = true;
+    setStatus("recording");
+    setMessage(null);
+    try {
+      const rec = await VoiceRecorder.create();
+      recorderRef.current = rec;
+      rec.start();
+      stopTimerRef.current = setTimeout(() => {
+        void finishRecording();
+      }, SELF_CHECK_SECONDS * 1000);
+    } catch (error) {
+      beginLockRef.current = false; // 失败释放锁
+      setStatus("idle");
+      setMessage(`${formatMicError(error)} 自检未通过，可重试。`);
+    }
+  }
+
+  async function finishRecording() {
+    const rec = recorderRef.current;
+    if (!rec) {
+      beginLockRef.current = false;
+      return;
+    }
+    const recording = await rec.stop();
+    recorderRef.current = null;
+    beginLockRef.current = false; // 录制完成释放
+    if (recording.blob.size === 0) {
+      setStatus("idle");
+      setMessage("自检录音为空，请重试。");
+      return;
+    }
+    const url = URL.createObjectURL(recording.blob);
+    playbackUrlRef.current = url;
+    setStatus("confirm");
+    // 尝试直接播放回放；若被浏览器 autoplay 策略阻止，用户仍可通过「试听录音」按钮触发播放
+    try {
+      const audio = new Audio(url);
+      audio.play().catch(() => undefined);
+    } catch {
+      // 静默降级
+    }
+  }
+
+  function retry() {
+    if (playbackUrlRef.current) {
+      URL.revokeObjectURL(playbackUrlRef.current);
+      playbackUrlRef.current = null;
+    }
+    beginLockRef.current = false;
+    passLockRef.current = false;
+    setStatus("idle");
+    setMessage(null);
+  }
+
+  function handlePass() {
+    if (passLockRef.current) {
+      return;
+    }
+    passLockRef.current = true;
+    onPass();
+  }
+
+  return (
+    <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
+      <h2 className="text-xl text-white">设备自检</h2>
+      <p className="mt-2 break-anywhere text-sm leading-6 text-[#b7c8e2]">
+        岗位「{job.title}」已选择。开始前请完成 3 秒麦克风自检：录音后回放，确认能听到自己的声音。
+      </p>
+
+      {message ? (
+        <p
+          className="mt-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
+          role="alert"
+        >
+          {message}
+        </p>
+      ) : null}
+
+      <div className="mt-5 flex min-w-0 flex-wrap items-center gap-3">
+        {status === "idle" ? (
+          <button
+            type="button"
+            className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={beginLockRef.current}
+            onClick={() => {
+              void begin();
+            }}
+          >
+            开始 3 秒自检录音
+          </button>
+        ) : null}
+        {status === "recording" ? (
+          <span className="text-sm text-[#ffb067]" role="status">
+            正在录制自检语音（{SELF_CHECK_SECONDS} 秒）…
+          </span>
+        ) : null}
+        {status === "playing" ? (
+          <span className="text-sm text-[#7eb6ff]" role="status">
+            正在回放你的录音…
+          </span>
+        ) : null}
+        {status === "confirm" ? (
+          <>
+            <span className="text-sm text-[#b7c8e2]">录音已完成。可试听回放或确认进入：</span>
+            <button
+              type="button"
+              className="max-w-full rounded-full border border-[#2f6fed] bg-[#0c1730] px-4 py-2 text-sm text-[#7eb6ff] hover:bg-[#1a2c54]"
+              onClick={() => {
+                if (playbackUrlRef.current) {
+                  const audio = new Audio(playbackUrlRef.current);
+                  audio.play().catch(() => {
+                    setMessage("回放失败：请检查系统音频输出设备后重试。");
+                  });
+                }
+              }}
+            >
+              试听录音
+            </button>
+            <button
+              type="button"
+              className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={passLockRef.current}
+              onClick={handlePass}
+            >
+              自检通过，进入面试舱
+            </button>
+            <button
+              type="button"
+              className="max-w-full rounded-full border border-[#2f6fed] bg-transparent px-4 py-2 text-sm text-[#7eb6ff]"
+              onClick={retry}
+            >
+              重新录制
+            </button>
+          </>
+        ) : null}
+        {status === "playback_failed" ? (
+          <button
+            type="button"
+            className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04]"
+            onClick={retry}
+          >
+            重试自检
+          </button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function InterviewPanel({
   mode,
   job,
   question,
   isFollowup,
   sid,
+  startedAtMs,
   answerText,
   answerHint,
   notice,
   busy,
   hold,
+  voicePhase,
+  level,
+  elapsed,
+  voiceMeta,
+  answerLog,
   onAnswerChange,
   onSubmit,
+  onStartRecording,
+  onStopSendRecording,
 }: {
   mode: ApiMode;
   job: Job;
   question: Question;
   isFollowup: boolean;
   sid: number | null;
+  startedAtMs: number | null;
   answerText: string;
   answerHint: string | null;
   notice: string | null;
   busy: boolean;
   hold: boolean;
+  voicePhase: "idle" | "recording" | "sending";
+  level: number;
+  elapsed: number;
+  voiceMeta: string | null;
+  answerLog: AnswerLogEntry[];
   onAnswerChange: (value: string) => void;
   onSubmit: () => void;
+  onStartRecording: () => void;
+  onStopSendRecording: () => void;
 }) {
   const trimmedLen = answerText.trim().length;
+  const [isTyping, setIsTyping] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const questionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const questionAudioTrackerRef = useRef(new QuestionAudioPlayer());
+
+  // 每道新题出现时尝试自动播放一次；若被浏览器 autoplay 策略阻止则静默忽略，保留 controls 供手动点击（AGENTS §6.2 审查项 5）
+  useEffect(() => {
+    if (
+      questionAudioTrackerRef.current.shouldAutoplay(
+        question.seq,
+        isFollowup,
+        question.audioUrl,
+      )
+    ) {
+      questionAudioRef.current?.play().catch(() => {
+        // 浏览器 autoplay 限制静默降级，不阻断答题流程
+      });
+    }
+  }, [question.seq, question.audioUrl, isFollowup]);
 
   return (
     <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-        <ModeBadge mode={mode} />
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {isFollowup ? (
-            <span className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-3 py-1 text-sm font-medium text-[#1a0d04]">
-              追问
-            </span>
+      <div className="flex min-w-0 gap-6">
+        <ProgressRail seq={question.seq} isFollowup={isFollowup} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+            <ModeBadge mode={mode} />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {isFollowup ? (
+                <span className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-3 py-1 text-sm font-medium text-[#1a0d04]">
+                  追问
+                </span>
+              ) : null}
+              <p className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a]/15 px-3 py-1 text-sm text-[#ffb067]">
+                第{question.seq}题 / 共{TOTAL_QUESTIONS}题
+              </p>
+              {startedAtMs !== null ? <InterviewTimer startedAtMs={startedAtMs} /> : null}
+            </div>
+          </div>
+          <p className="mt-6 text-sm text-[#7eb6ff]">{job.family}</p>
+          <h2 className="mt-1 break-anywhere text-2xl text-white">{job.title}</h2>
+          {sid !== null ? <p className="mt-2 text-sm text-[#9fb4d4]">会话 {sid}</p> : null}
+          <div className="my-2 flex flex-col items-center justify-center">
+            <InterviewerWaveform active={isTyping || isPlayingAudio} />
+          </div>
+          <QuestionSubtitle text={question.text} onTypingChange={setIsTyping} />
+          {question.audioUrl !== null ? (
+            <audio
+              ref={questionAudioRef}
+              className="mt-4 max-w-full"
+              controls
+              src={question.audioUrl}
+              preload="auto"
+              onPlay={() => setIsPlayingAudio(true)}
+              onEnded={() => setIsPlayingAudio(false)}
+              onPause={() => setIsPlayingAudio(false)}
+            >
+              当前浏览器不支持音频播放。
+            </audio>
           ) : null}
-          <p className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a]/15 px-3 py-1 text-sm text-[#ffb067]">
-            第{question.seq}题 / 共{TOTAL_QUESTIONS}题
-          </p>
+
+          {notice ? (
+            <p
+              className="mt-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
+              role="alert"
+            >
+              {notice}
+            </p>
+          ) : null}
+
+          {mode === "real" ? (
+            <div className="mt-6 rounded-2xl border border-[#1d4ed8]/60 bg-[#070b14] p-4">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                <span className="text-sm text-[#9fb4d4]">
+                  语音回答（webm/opus，随录音提交时长与停顿统计）
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-9 w-9 items-center justify-center">
+                    <span
+                      className="absolute inset-0 rounded-full border border-[#2f6fed]/70"
+                      style={{
+                        transform: `scale(${1 + level * 0.7})`,
+                        boxShadow: `0 0 ${8 + level * 24}px rgba(47,111,237,${0.3 + level * 0.5})`,
+                        transition: "transform 90ms linear",
+                      }}
+                    />
+                    <span
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{
+                        background:
+                          voicePhase === "recording" && level > 0.05 ? "#ff8a2a" : "#2f6fed",
+                      }}
+                    />
+                  </span>
+                  {voicePhase === "recording" ? (
+                    <span className="text-sm text-[#ffb067]">{elapsed.toFixed(1)}s</span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={busy || hold || voicePhase !== "idle"}
+                  onClick={onStartRecording}
+                >
+                  开始录音
+                </button>
+                {voicePhase === "recording" ? (
+                  <button
+                    type="button"
+                    className="max-w-full rounded-full border border-[#ff5a5a] bg-[#2a0d0d] px-4 py-2 text-sm font-medium text-[#ffb0b0]"
+                    onClick={onStopSendRecording}
+                  >
+                    停止并发送
+                  </button>
+                ) : null}
+                {voicePhase === "sending" ? (
+                  <div
+                    className="flex items-center gap-2 rounded-lg border border-[#2f6fed]/40 bg-[#0c1730] px-3 py-1.5 text-xs text-[#7eb6ff]"
+                    role="status"
+                  >
+                    <span className="inline-block h-2 w-2 animate-ping rounded-full bg-[#2f6fed]" />
+                    <span>ASR 正在上传与转写语音…（预计 3-5 秒，请稍候）</span>
+                  </div>
+                ) : null}
+              </div>
+              {voiceMeta ? (
+                <p className="mt-2 break-anywhere text-xs text-[#7ee787]" role="status">
+                  ✓ {voiceMeta}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          <label className="mt-6 block min-w-0 max-w-full">
+            <span className="text-sm text-[#9fb4d4]">文本回答</span>
+            <textarea
+              className="mt-2 min-h-36 w-full max-w-full resize-y rounded-2xl border border-[#2f6fed] bg-[#070b14] px-4 py-3 text-sm leading-6 text-white outline-none focus:border-[#ff8a2a]"
+              value={answerText}
+              disabled={busy || hold || voicePhase !== "idle"}
+              onChange={(event) => {
+                onAnswerChange(event.target.value);
+              }}
+              placeholder="输入回答后提交。前后空白会被忽略，长度需在 1–5000 字。"
+            />
+          </label>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-3 text-xs text-[#9fb4d4]">
+            <span>
+              已输入（去空白）{trimmedLen} / {MAX_ANSWER_LEN}
+            </span>
+            {answerHint ? (
+              <span className="break-anywhere text-[#ffb067]" role="alert">
+                {answerHint}
+              </span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="mt-4 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={busy || hold || voicePhase !== "idle"}
+            onClick={onSubmit}
+          >
+            {busy ? "正在提交…" : "提交文本回答"}
+          </button>
+
+          <div className="mt-6 border-t border-[#1d2c4e] pt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-[#5b6b85]">回答记录与转写轨迹（本会话）</p>
+              <span className="text-xs text-[#5b6b85]">共 {answerLog.length} 条</span>
+            </div>
+            {answerLog.length === 0 ? (
+              <p className="mt-2 text-xs text-[#5b6b85]">暂无已提交回答。</p>
+            ) : (
+              <div className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-1" aria-label="ASR转写轨迹">
+                {answerLog.map((entry) => (
+                  <span
+                    key={entry.key}
+                    className="whitespace-nowrap rounded-full border border-[#2f6fed]/60 bg-[#0c1730] px-3 py-1 text-xs text-[#9fb4d4]"
+                  >
+                    第{entry.seq}题 ·{" "}
+                    {entry.kind === "voice"
+                      ? `🎙 时长 ${entry.durationS?.toFixed(1)}s / 停顿 ${entry.pauseCnt} 次`
+                      : "⌨ 文本回答"}
+                    {entry.isFollowup ? " · 追问" : ""}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      <p className="mt-6 text-sm text-[#7eb6ff]">{job.family}</p>
-      <h2 className="mt-1 break-anywhere text-2xl text-white">{job.title}</h2>
-      {sid !== null ? <p className="mt-2 text-sm text-[#9fb4d4]">会话 {sid}</p> : null}
-      <p className="mt-6 break-anywhere text-lg leading-8 text-white">{question.text}</p>
-      {question.audioUrl !== null ? (
-        <audio className="mt-4 max-w-full" controls src={question.audioUrl} preload="none">
-          当前浏览器不支持音频播放。
-        </audio>
-      ) : null}
-
-      {notice ? (
-        <p
-          className="mt-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
-          role="alert"
-        >
-          {notice}
-        </p>
-      ) : null}
-
-      <label className="mt-6 block min-w-0 max-w-full">
-        <span className="text-sm text-[#9fb4d4]">文本回答</span>
-        <textarea
-          className="mt-2 min-h-36 w-full max-w-full resize-y rounded-2xl border border-[#2f6fed] bg-[#070b14] px-4 py-3 text-sm leading-6 text-white outline-none focus:border-[#ff8a2a]"
-          value={answerText}
-          disabled={busy || hold}
-          onChange={(event) => {
-            onAnswerChange(event.target.value);
-          }}
-          placeholder="输入回答后提交。前后空白会被忽略，长度需在 1–5000 字。"
-        />
-      </label>
-      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-3 text-xs text-[#9fb4d4]">
-        <span>已输入（去空白）{trimmedLen} / {MAX_ANSWER_LEN}</span>
-        {answerHint ? (
-          <span className="break-anywhere text-[#ffb067]" role="alert">
-            {answerHint}
-          </span>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        className="mt-4 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={busy || hold}
-        onClick={onSubmit}
-      >
-        {busy ? "正在提交…" : "提交回答"}
-      </button>
     </section>
+  );
+}
+
+function ProgressRail({ seq, isFollowup }: { seq: number; isFollowup: boolean }) {
+  return (
+    <ol className="hidden shrink-0 flex-col gap-3 md:flex" aria-label="题目进度轨道">
+      {Array.from({ length: TOTAL_QUESTIONS }, (_, i) => i + 1).map((n) => {
+        const done = n < seq;
+        const current = n === seq;
+        return (
+          <li key={n} className="flex items-center gap-2">
+            <span
+              className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs ${
+                done
+                  ? "border-[#2f6fed] bg-[#2f6fed]/30 text-[#bcd7ff]"
+                  : current
+                    ? isFollowup
+                      ? "cockpit-pulse border-[#ff8a2a] bg-[#ff8a2a]/25 text-[#ffd0a8]"
+                      : "border-[#ff8a2a] bg-[#ff8a2a]/15 text-[#ffb067]"
+                    : "border-[#33415e] text-[#5b6b85]"
+              }`}
+            >
+              {n}
+            </span>
+            <span className={`text-xs ${current ? "text-white" : "text-[#5b6b85]"}`}>
+              {done ? "已完成" : current ? (isFollowup ? "追问中" : "作答中") : "待作答"}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function InterviewerWaveform({ active }: { active: boolean }) {
+  const delays = ["0ms", "150ms", "300ms", "450ms", "300ms", "150ms", "0ms"];
+  return (
+    <div
+      className="flex items-center justify-center gap-1.5 py-3"
+      role="img"
+      aria-label="面试官声波动画"
+    >
+      {delays.map((delay, idx) => (
+        <span
+          key={idx}
+          className={`h-8 w-1.5 rounded-full transition-all duration-300 ${
+            active ? "wave-bar bg-[#2f6fed]" : "scale-y-25 bg-[#1f293d]"
+          }`}
+          style={{ animationDelay: active ? delay : undefined }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function QuestionSubtitle({
+  text,
+  onTypingChange,
+}: {
+  text: string;
+  onTypingChange?: (typing: boolean) => void;
+}) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    setShown(0);
+    if (!text) {
+      onTypingChange?.(false);
+      return;
+    }
+    onTypingChange?.(true);
+    const timer = setInterval(() => {
+      setShown((n) => {
+        if (n >= text.length) {
+          clearInterval(timer);
+          onTypingChange?.(false);
+          return n;
+        }
+        return n + 1;
+      });
+    }, 40);
+    return () => {
+      clearInterval(timer);
+      onTypingChange?.(false);
+    };
+  }, [text, onTypingChange]);
+  return (
+    <p className="mt-4 min-h-20 break-anywhere text-lg leading-8">
+      <span className="text-white">{text.slice(0, shown)}</span>
+      <span className="text-[#3a4a66]">{text.slice(shown)}</span>
+      {shown < text.length ? <span className="subtitle-caret text-[#ff8a2a]">▍</span> : null}
+    </p>
+  );
+}
+
+function InterviewTimer({ startedAtMs }: { startedAtMs: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const total = Math.max(0, Math.floor((now - startedAtMs) / 1000));
+  const mm = String(Math.floor(total / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  return (
+    <p className="rounded-full border border-[#2f6fed] px-3 py-1 text-xs text-[#7eb6ff]">
+      ⏱ {mm}:{ss}
+    </p>
   );
 }
 
@@ -634,7 +1399,12 @@ type RealSessionResult =
   | { kind: "network" }
   | { kind: "http"; status: number; code: string | null; serverMessage: string | null }
   | { kind: "invalid"; message: string }
-  | { kind: "ok"; sid: number; question: Question };
+  | {
+      kind: "ok";
+      sid: number;
+      question: Question;
+      transitionAudioUrls: string[];
+    };
 
 async function requestRealSession(jobId: number): Promise<RealSessionResult> {
   let response: Response;
@@ -661,17 +1431,19 @@ async function requestRealSession(jobId: number): Promise<RealSessionResult> {
   } catch {
     return { kind: "invalid", message: "会话响应不是合法 JSON。未进入面试。" };
   }
-  const parsed = parseSession(payload);
+  const parsed = parseSessionResponse(payload);
   if (!parsed.ok) {
     return { kind: "invalid", message: parsed.message };
   }
-  return { kind: "ok", sid: parsed.value.sid, question: parsed.value.question };
+  return {
+    kind: "ok",
+    sid: parsed.value.sid,
+    question: parsed.value.question,
+    transitionAudioUrls: parsed.value.transitionAudioUrls,
+  };
 }
 
-type AnswerOk =
-  | { type: "followup"; question: Question }
-  | { type: "next"; question: Question }
-  | { type: "done"; reportId: number };
+type AnswerOk = AnswerData;
 
 type TextAnswerResult =
   | { kind: "network" }
@@ -711,6 +1483,62 @@ async function requestTextAnswer(sid: number, answerText: string): Promise<TextA
   return { kind: "ok", value: parsed.value };
 }
 
+type AudioAnswerResult = TextAnswerResult;
+
+/**
+ * 语音答题：multipart 提交 webm/opus 与客户端声学统计（duration_s/pause_cnt）。
+ * 不设置 Content-Type（由浏览器自动带 multipart boundary）。
+ */
+async function requestAudioAnswer(
+  sid: number,
+  blob: Blob,
+  durationS: number,
+  pauseCnt: number,
+): Promise<AudioAnswerResult> {
+  const form = new FormData();
+  form.append("audio", new File([blob], "answer.webm", { type: blob.type || "audio/webm" }));
+  form.append("duration_s", durationS.toFixed(1));
+  form.append("pause_cnt", String(pauseCnt));
+
+  let response: Response;
+  try {
+    response = await fetch(`/api/sessions/${sid}/answers`, {
+      method: "POST",
+      body: form,
+      cache: "no-store",
+    });
+  } catch {
+    return { kind: "network" };
+  }
+  if (!response.ok) {
+    const info = await readApiError(response);
+    return { kind: "http", ...info };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { kind: "invalid", message: "语音回答响应不是合法 JSON。未推进题目。" };
+  }
+  const parsed = parseAnswerResponse(payload);
+  if (!parsed.ok) {
+    return { kind: "invalid", message: parsed.message };
+  }
+  return { kind: "ok", value: parsed.value };
+}
+
+function formatMicError(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      return "麦克风权限被拒绝。请在浏览器地址栏允许麦克风后重新开始录音。";
+    }
+    if (error.name === "NotFoundError" || error.name === "OverconstrainedError") {
+      return "未检测到可用麦克风设备，无法进行语音回答。";
+    }
+  }
+  return "麦克风初始化失败，请检查设备后重试。";
+}
+
 function parseJobs(payload: unknown): ParseOk<Job[]> | ParseErr {
   if (!isRecord(payload) || !Array.isArray(payload.jobs)) {
     return {
@@ -740,85 +1568,6 @@ function parseJobs(payload: unknown): ParseOk<Job[]> | ParseErr {
     });
   }
   return { ok: true, value: jobs };
-}
-
-function parseSession(payload: unknown): ParseOk<{ sid: number; question: Question }> | ParseErr {
-  const invalid =
-    "会话响应格式不正确：sid 须为正整数，question.text 须为非空字符串，seq 须为 1–6 的整数，audio_url 须为 null 或非空字符串。未进入面试。";
-  if (!isRecord(payload) || !isPositiveInt(payload.sid) || !isRecord(payload.question)) {
-    return { ok: false, message: invalid };
-  }
-  const question = parseQuestion(payload.question);
-  if (!question) {
-    return { ok: false, message: invalid };
-  }
-  return {
-    ok: true,
-    value: {
-      sid: payload.sid,
-      question,
-    },
-  };
-}
-
-function parseAnswerResponse(payload: unknown): ParseOk<AnswerOk> | ParseErr {
-  const invalid =
-    "回答响应格式不正确：type 须为 followup/next/done；followup/next 须含合法 question；done.report_id 须为正整数；transition_audio_url 若存在须为 null 或非空字符串。未推进题目。";
-  if (!isRecord(payload) || typeof payload.type !== "string") {
-    return { ok: false, message: invalid };
-  }
-  if (!isOptionalAudioUrl(payload.transition_audio_url)) {
-    return { ok: false, message: invalid };
-  }
-
-  if (payload.type === "done") {
-    if (!isPositiveInt(payload.report_id)) {
-      return { ok: false, message: invalid };
-    }
-    return { ok: true, value: { type: "done", reportId: payload.report_id } };
-  }
-
-  if (payload.type === "followup" || payload.type === "next") {
-    if (!isRecord(payload.question)) {
-      return { ok: false, message: invalid };
-    }
-    const question = parseQuestion(payload.question);
-    if (!question) {
-      return { ok: false, message: invalid };
-    }
-    return { ok: true, value: { type: payload.type, question } };
-  }
-
-  return { ok: false, message: invalid };
-}
-
-function parseQuestion(value: Record<string, unknown>): Question | null {
-  if (typeof value.text !== "string" || value.text.trim().length === 0) {
-    return null;
-  }
-  if (!isQuestionSeq(value.seq)) {
-    return null;
-  }
-  if (!isAudioUrl(value.audio_url)) {
-    return null;
-  }
-  return {
-    text: value.text,
-    audioUrl: value.audio_url,
-    seq: value.seq,
-  };
-}
-
-function isOptionalAudioUrl(value: unknown): boolean {
-  return value === undefined || isAudioUrl(value);
-}
-
-function isAudioUrl(value: unknown): value is string | null {
-  return value === null || (typeof value === "string" && value.length > 0);
-}
-
-function isQuestionSeq(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= TOTAL_QUESTIONS;
 }
 
 function isPositiveInt(value: unknown): value is number {

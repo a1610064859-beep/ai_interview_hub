@@ -73,3 +73,58 @@
 ### 备注
 
 - 本轮为关闭 M1 人工门禁的真实流程证据。
+
+## T6 真实浏览器语音闭环验收（第二轮）
+
+范围：real 模式（Next :34724 → FastAPI :18080）+ Edge headless 153 CDP（:9223）。麦克风捕获设备注入真实中文语音文件（SAPI 合成 wav，`--use-file-for-fake-audio-capture`），`--use-fake-ui-for-media-stream` 自动授权，`--autoplay-policy=no-user-gesture-required` 允许自检回放与过渡语自动播放。注入说明：语音内容为真实中文语音（非纯音/静音仿真），但 looping 注入导致 ASR 文本含无意义音节，内容分不代表真实面试水平——本验证目标是链路与声学评分，不以内容分为准。
+
+### 执行结果
+
+| 项 | 状态 | 说明 |
+| --- | --- | --- |
+| 设备自检（录 3s → 回放 → 确认） | 通过 | 自检录音 3s → 自动回放 →「能清楚听到自己的声音吗」→ 点击「自检通过，进入面试舱」 |
+| 拒绝权限/回放失败路径 | 代码就绪 | NotAllowed/NotFound 文案与回放失败重试已实现；本轮未注入权限拒绝（自动化浏览器自动授权），留人工抽验 |
+| 1.5s 座舱过场 | 通过 | 自检通过后进入「正在进入面试舱…」过场页，随后渲染面试舱 |
+| 面试舱核心展示 | 通过 | 左侧题目进度轨道（1–6 节点、当前橙色、追问中 pulse）、字幕逐字亮起（40ms/字）、右上 ⏱ 计时、电平环随注入语音起伏 |
+| 真实 MediaRecorder→WebM→multipart 上传 | 通过 | 12 次语音提交全部 200（6 题 + 每题追问，共 12 次，符合每题最多 1 层追问） |
+| 真实 ASR 转写 | 通过 | 服务端 FunASR 对注入语音返回真实转写（含无意义音节，见注入说明） |
+| 声学评分非 null | **通过** | 报告 session 1：`expression_fluency.score=82.7`，reason=「语速168字/分（扣10.5）、停顿6.8次/分（扣1.5）、填充词6.8个/分（扣5.3），共12条有效语音回答」——浏览器声学值真实进入评分 |
+| done → 跳转报告页 | 通过 | 浏览器位于 `/reports/1`（sid 路径，非 report_id） |
+| 过渡语播放 | 降级验证 | edge-tts 403（R1黄）导致 `transition_audio_url=null`，前端静默跳过播放、不阻断推进——失败不阻断路径已实测 |
+| 语音提交同步 ref 锁 | 代码就绪 | `voiceSubmitLockRef` 同步拦截双击；自动化未注入双击竞态，留人工抽验 |
+| 单测 / typecheck / build | 通过 | 19 tests 全过；`tsc --noEmit` 0；`next build` 0 |
+| 端口清理 | 通过 | `taskkill` 结束 :9223/:34724/:18080，复查无 LISTENING |
+
+### 已知边界
+
+- 注入语音 looping 使转写文本失真（"hello 啦 啦 ty 啥"类音节），内容维度分（2.5/5.0/4.0）不具参考性；声学维度与链路行为是本轮验收对象。
+- 真人手持麦克风的完整 6 题语音流程（含自然语音内容分）仍属 H/J 人工验收项。
+
+### J 人工 curl 证据（2026-09-22，补录）
+
+说明：本段为并行验收线产出的 **人工 curl J 证据**，仅补录至本文件；**不覆盖**上文「T6 真实浏览器语音闭环验收（第二轮）」记录。样本为真实中文 WebM（SAPI 中文合成 wav → ffmpeg opus），未将音频/json 合入本分支。
+
+前置：`TTS_ENABLED=false`，`ASR_ENABLED=true`，uvicorn `127.0.0.1:18080`；样本约 59632 bytes / 10.3s。
+
+1. 创建会话
+   - `POST /api/sessions` body `{"job_id":1}` → **HTTP 200**，**sid=1**，`question.seq=1`，`audio_url=null`
+
+2. 主答（真实中文 WebM）
+   - `POST /api/sessions/1/answers` multipart：`audio`=中文 webm，`duration_s=10.3`，`pause_cnt=1`
+   - **HTTP 200**（约 26.3s，含首次 FunASR 加载）
+   - 响应：`type=followup`，`question.seq=1`，`transition_audio_url=null`
+
+3. 追问（同样本）
+   - 同上，`pause_cnt=0` → **HTTP 200**（约 0.63s）
+   - 响应：`type=next`，`question.seq=2`，`transition_audio_url=null`
+   - 推进：**followup → next**
+
+4. DB `answers` 声学落库
+
+| id | q_seq | is_followup | duration_s | wpm | pause_cnt | filler_cnt |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 0 | 10.3 | 209.7 | 1 | 0 |
+| 2 | 1 | 1 | 10.3 | 209.7 | 0 | 0 |
+
+5. 本轮 J 未跑至 `done`，无流畅度终评；全场报告仍以上文浏览器第二轮为准。
+6. FastAPI 端口清理：验收后 `taskkill` 结束 uvicorn；复查 `18080/34723/34722/9231` 均为 **NO_LISTENER**。
