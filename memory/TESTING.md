@@ -194,3 +194,54 @@
 - **真实 TTS 门禁**（`TTS_ACCEPTANCE_REAL=1`，仅跑 `test_edge_tts_v7_real_synthesis_and_ffprobe`）：**1 passed**，退出码 0；短句「你好」`mp3_bytes=7200`；ffprobe `format_name=mp3`，`codec_name=mp3`，`sample_rate=24000`，`channels=1`，`duration=1.200000`；跑完清除环境变量
 - 附带修复（既有提交）：`TTS_ENABLED=false` 时预取/URL 复用一律返回 `None`，避免磁盘残留 MP3 污染文本编排断言；`test_text_flow` autouse 关闭 TTS
 - 临时验证产物未入库；本定点修复仅改 `tests/test_tts.py` 与本文件
+
+## [T6-FIX] 最终评分断连后的报告只读恢复
+
+范围：仅前端结果确认。网络异常或反代式 HTTP 500（无已知业务 `detail.code`）后，**不重发 POST**，只读轮询 `GET /api/reports/{sid}`；503 / 409 `ANSWER_IN_PROGRESS` 等保持原语义。
+
+分支 / worktree：`feature/T6-final-result-recovery` @ `E:\ai_interview_hub_t6_recovery`，基线 `main`=`5c5c3ca`。
+
+### 行为要点
+
+1. POST 严格只发一次（既有同步锁）。
+2. 结果不明 → 保持提交锁 + 文案「正在确认评分结果，请勿重复提交」→ 首次立即查报告，之后每 2s，最长 120s。
+3. 报告 200 合法 → `router.push(/reports/{sid})`；`REPORT_NOT_FOUND` 继续等；`SESSION_NOT_FOUND` 停；超时保留锁并给出报告页链接。
+4. 组件卸载 AbortSignal 取消轮询。
+5. **未改** `server/**`、评分规则、LLM/ASR/TTS、API 契约、`package.json` / `next.config.ts`。
+
+### 自动化（A–I）
+
+| 项 | 结果 |
+| --- | --- |
+| A 网络异常后 404→404→200，POST=1 | 通过 |
+| B HTTP 500 未知 → 报告立即 200 | 通过 |
+| C 503 SCORING_UNAVAILABLE 不轮询 | 通过 |
+| D 409 ANSWER_IN_PROGRESS 不重发、不轮询 | 通过 |
+| E SESSION_NOT_FOUND 立即停 | 通过 |
+| F 非法报告结构 → still_unknown | 通过 |
+| G 超最大轮询停，POST 仍=1 | 通过 |
+| H AbortSignal 取消 | 通过 |
+| I 409 SESSION_COMPLETED 只读确认报告 | 通过 |
+| J 未知 404（无 code / 非 REPORT_NOT_FOUND）立即停，GET=1 | 通过 |
+| K 仅 REPORT_NOT_FOUND 才继续轮询 | 通过 |
+
+### 复审定点（Astra）
+
+- 404 仅 `REPORT_NOT_FOUND` 继续；其余 404 → `unexpected_http`。
+- `page.tsx` sleep 在定时器结束与 abort 时均 `removeEventListener`。
+- amend 入本分支 HEAD；文件边界仍为批准的 4 个文件。
+
+### 门禁与浏览器 stub
+
+| 检查 | 退出码 |
+| --- | --- |
+| `npm test`（含 A–I） | 0（43 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build`（含 real 验收构建） | 0 |
+| 全量 pytest（项目 .venv） | 0（69 passed, 2 skipped） |
+
+浏览器 stub（Edge headless CDP + 临时 stub `:18091`，Next `:34730`）：
+- 答案 POST **1** 次（代理式 HTTP 500，无业务 code）
+- 恢复轮询报告：`404 REPORT_NOT_FOUND` → `404` → `200`；随后报告页自身再 GET 1 次（预期）
+- 最终 URL：`http://127.0.0.1:34730/reports/5`
+- 全程无第二次 POST；验收后 `:18091` / `:34730` / `:9235` 均清理为无监听

@@ -15,6 +15,17 @@ import {
   TransitionAudioTracker,
   QuestionAudioPlayer,
 } from "../lib/recorder";
+import {
+  CONFIRMING_NOTICE,
+  TIMEOUT_NOTICE,
+  isAmbiguousSubmitFailure,
+  reportPathForSid,
+  resolveAfterAnswerSubmit,
+  shouldConfirmReportReadOnly,
+  type AnswerPostResult,
+  type RecoveryDeps,
+  type ResolveOutcome,
+} from "../lib/session-recovery";
 
 const TOTAL_QUESTIONS = 6;
 const MOCK_FOLLOWUP_SEQ = 2;
@@ -101,8 +112,10 @@ export default function HomePage() {
   const [level, setLevel] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [voiceMeta, setVoiceMeta] = useState<string | null>(null);
+  const [confirmHref, setConfirmHref] = useState<string | null>(null);
   const voiceSubmitLockRef = useRef(false);
   const transitionTrackerRef = useRef(new TransitionAudioTracker());
+  const recoveryAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const mode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
@@ -129,10 +142,12 @@ export default function HomePage() {
     };
   }, []);
 
-  // 组件卸载时释放录音与计时资源
+  // 组件卸载时释放录音、计时与报告恢复轮询
   useEffect(() => {
     return () => {
       stopLevelTimer();
+      recoveryAbortRef.current?.abort();
+      recoveryAbortRef.current = null;
       recorderRef.current?.dispose();
       recorderRef.current = null;
     };
@@ -146,7 +161,40 @@ export default function HomePage() {
     }
   }
 
+  function makeRecoveryDeps(): RecoveryDeps {
+    recoveryAbortRef.current?.abort();
+    const controller = new AbortController();
+    recoveryAbortRef.current = controller;
+    return {
+      fetch: (input, init) => fetch(input, init as RequestInit),
+      sleep: (ms, signal) =>
+        new Promise<void>((resolve, reject) => {
+          if (signal?.aborted) {
+            const err = new Error("The operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+            return;
+          }
+          const onAbort = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", onAbort);
+            const err = new Error("The operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          };
+          const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+          }, ms);
+          signal?.addEventListener("abort", onAbort);
+        }),
+      signal: controller.signal,
+    };
+  }
+
   function resetSessionState() {
+    recoveryAbortRef.current?.abort();
+    recoveryAbortRef.current = null;
     setAnswerText("");
     setAnswerHint(null);
     setAnswerLog([]);
@@ -156,10 +204,187 @@ export default function HomePage() {
     setElapsed(0);
     setHold(false);
     setNotice(null);
+    setConfirmHref(null);
     transitionTrackerRef.current.reset();
     voiceSubmitLockRef.current = false;
     submitLock.current = false;
     // 注意：resetSessionState 绝不得修改 createLock！只能在失败路径释放（AGENTS 审查项 1）
+  }
+
+  async function applyResolveOutcome(
+    outcome: ResolveOutcome,
+    sid: number,
+    channel: "voice" | "text",
+  ): Promise<"navigated" | "advanced" | "stopped"> {
+    if (outcome.outcome === "report_ready") {
+      router.push(reportPathForSid(sid));
+      return "navigated";
+    }
+    if (outcome.outcome === "answer_ok") {
+      return "advanced";
+    }
+    if (outcome.outcome === "aborted") {
+      return "stopped";
+    }
+    if (outcome.outcome === "scoring_unavailable") {
+      if (channel === "voice") {
+        voiceSubmitLockRef.current = false;
+      } else {
+        submitLock.current = false;
+      }
+      setBusy(false);
+      setHold(false);
+      setConfirmHref(null);
+      setNotice(
+        formatApiError(
+          {
+            status: outcome.status,
+            code: outcome.code,
+            serverMessage: outcome.serverMessage,
+          },
+          channel === "voice" ? "语音提交失败" : "提交失败",
+          channel === "voice"
+            ? "服务暂时不可用，请稍后重新录音再试。未自动重发。"
+            : "已保留当前输入，可人工重试。未自动重发。",
+        ),
+      );
+      return "stopped";
+    }
+    if (outcome.outcome === "answer_in_progress") {
+      setBusy(false);
+      setHold(true);
+      setConfirmHref(null);
+      setNotice(
+        formatApiError(
+          {
+            status: outcome.status,
+            code: outcome.code,
+            serverMessage: outcome.serverMessage,
+          },
+          channel === "voice" ? "语音提交失败" : "提交失败",
+          channel === "voice"
+            ? "结果不明，请刷新确认后再试。未自动重发。"
+            : "已保留当前输入。结果不明，请刷新确认后再试。未自动重发。",
+        ),
+      );
+      return "stopped";
+    }
+    if (outcome.outcome === "retryable_client") {
+      if (channel === "voice") {
+        voiceSubmitLockRef.current = false;
+      } else {
+        submitLock.current = false;
+      }
+      setBusy(false);
+      setHold(false);
+      setConfirmHref(null);
+      const isAudioShape =
+        outcome.code === "AUDIO_INVALID" ||
+        outcome.code === "AUDIO_TOO_LARGE" ||
+        outcome.status === 413 ||
+        outcome.status === 422;
+      setNotice(
+        formatApiError(
+          {
+            status: outcome.status,
+            code: outcome.code,
+            serverMessage: outcome.serverMessage,
+          },
+          channel === "voice" ? "语音提交失败" : "提交失败",
+          isAudioShape && channel === "voice"
+            ? "录音未被接受，请重新录音。"
+            : channel === "voice"
+              ? "服务暂时不可用，请稍后重新录音再试。未自动重发。"
+              : "已保留当前输入。未自动重试。",
+        ),
+      );
+      return "stopped";
+    }
+    if (outcome.outcome === "session_not_found") {
+      setBusy(false);
+      setHold(true);
+      setConfirmHref(null);
+      setNotice("会话不存在（SESSION_NOT_FOUND）。已停止确认，请勿重复提交。");
+      return "stopped";
+    }
+    if (outcome.outcome === "still_unknown") {
+      setBusy(false);
+      setHold(true);
+      if (outcome.reason === "timeout") {
+        setConfirmHref(reportPathForSid(sid));
+        setNotice(TIMEOUT_NOTICE);
+      } else {
+        setConfirmHref(reportPathForSid(sid));
+        setNotice("结果状态仍未知，请打开报告页确认。未自动重发。");
+      }
+      return "stopped";
+    }
+    if (outcome.outcome === "invalid_locked") {
+      setBusy(false);
+      setHold(true);
+      setConfirmHref(null);
+      setNotice(`${outcome.message} 结果不明，请刷新确认后再试。未自动重发。`);
+      return "stopped";
+    }
+    // business_error
+    if (channel === "voice") {
+      voiceSubmitLockRef.current = false;
+    } else {
+      submitLock.current = false;
+    }
+    setBusy(false);
+    setHold(false);
+    setConfirmHref(null);
+    setNotice(
+      formatApiError(
+        {
+          status: outcome.status,
+          code: outcome.code,
+          serverMessage: outcome.serverMessage,
+        },
+        channel === "voice" ? "语音提交失败" : "提交失败",
+        channel === "voice" ? "未推进题目。未自动重试。" : "已保留当前输入。未自动重试。",
+      ),
+    );
+    return "stopped";
+  }
+
+  function toAnswerPostResult(
+    result:
+      | { kind: "network" }
+      | { kind: "http"; status: number; code: string | null; serverMessage: string | null }
+      | { kind: "invalid"; message: string }
+      | { kind: "ok"; value: AnswerData },
+  ): AnswerPostResult {
+    if (result.kind === "ok") {
+      return { kind: "ok", value: result.value };
+    }
+    return result;
+  }
+
+  async function resolveSubmitResult(
+    result:
+      | { kind: "network" }
+      | { kind: "http"; status: number; code: string | null; serverMessage: string | null }
+      | { kind: "invalid"; message: string }
+      | { kind: "ok"; value: AnswerData },
+    sid: number,
+    channel: "voice" | "text",
+  ): Promise<{ flow: "navigated" | "advanced" | "stopped"; value?: AnswerData }> {
+    const post = toAnswerPostResult(result);
+    if (isAmbiguousSubmitFailure(post) || shouldConfirmReportReadOnly(post)) {
+      // 进入只读确认时保持锁并提示，禁止再次提交
+      setHold(true);
+      setBusy(true);
+      setConfirmHref(null);
+      setNotice(CONFIRMING_NOTICE);
+    }
+    const outcome = await resolveAfterAnswerSubmit(post, sid, makeRecoveryDeps());
+    if (outcome.outcome === "answer_ok") {
+      return { flow: "advanced", value: outcome.value as AnswerData };
+    }
+    const flow = await applyResolveOutcome(outcome, sid, channel);
+    return { flow };
   }
 
   async function choose(mode: ApiMode, job: Job) {
@@ -322,47 +547,12 @@ export default function HomePage() {
     );
     setVoicePhase("idle");
 
-    if (result.kind === "network") {
-      // 结果不明：保持锁页与 ref 锁，绝不自动重发
-      setHold(true);
-      setNotice("网络失败，无法确认语音回答是否已提交。结果不明，请刷新确认后再试。未自动重发。");
+    const resolved = await resolveSubmitResult(result, view.sid, "voice");
+    if (resolved.flow === "navigated" || resolved.flow === "stopped") {
       return;
     }
-    if (result.kind === "http") {
-      const code = result.code ?? "";
-      if (code === "ANSWER_IN_PROGRESS") {
-        setHold(true);
-        setNotice(
-          formatApiError(result, "语音提交失败", "结果不明，请刷新确认后再试。未自动重发。"),
-        );
-        return;
-      }
-      if (
-        code === "ASR_UNAVAILABLE" ||
-        code === "AUDIO_PROCESS_FAILED" ||
-        code === "SCORING_UNAVAILABLE"
-      ) {
-        voiceSubmitLockRef.current = false;
-        setBusy(false);
-        setNotice(
-          formatApiError(result, "语音提交失败", "服务暂时不可用，请稍后重新录音再试。未自动重发。"),
-        );
-        return;
-      }
-      if (code === "AUDIO_INVALID" || code === "AUDIO_TOO_LARGE") {
-        voiceSubmitLockRef.current = false;
-        setBusy(false);
-        setNotice(formatApiError(result, "语音提交失败", "录音未被接受，请重新录音。"));
-        return;
-      }
-      voiceSubmitLockRef.current = false;
-      setBusy(false);
-      setNotice(formatApiError(result, "语音提交失败", "未推进题目。未自动重试。"));
-      return;
-    }
-    if (result.kind === "invalid") {
-      setHold(true);
-      setNotice(`${result.message} 结果不明，请刷新确认后再试。未自动重发。`);
+    const value = resolved.value;
+    if (!value) {
       return;
     }
 
@@ -378,10 +568,10 @@ export default function HomePage() {
       },
     ]);
 
-    if (result.value.type === "done") {
+    if (value.type === "done") {
       voiceSubmitLockRef.current = false;
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
-      router.push(`/reports/${view.sid}`);
+      router.push(reportPathForSid(view.sid));
       return;
     }
 
@@ -390,13 +580,15 @@ export default function HomePage() {
       mode: "real",
       job: view.job,
       sid: view.sid,
-      question: result.value.question,
-      isFollowup: result.value.type === "followup",
+      question: value.question,
+      isFollowup: value.type === "followup",
       startedAtMs: view.startedAtMs,
       transitionAudioUrls: view.transitionAudioUrls,
-      transitionAudioUrl: result.value.transitionAudioUrl,
+      transitionAudioUrl: value.transitionAudioUrl,
     });
     setVoiceMeta(null);
+    setConfirmHref(null);
+    setNotice(null);
     voiceSubmitLockRef.current = false;
     setBusy(false);
   }
@@ -420,6 +612,7 @@ export default function HomePage() {
     setBusy(true);
     setAnswerHint(null);
     setNotice(null);
+    setConfirmHref(null);
 
     if (view.mode === "mock") {
       const next = advanceMockInterview(view, normalized);
@@ -441,43 +634,12 @@ export default function HomePage() {
     // 提交文本回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖大模型时延（AGENTS §6.2）
     playTransitionAudio(view.transitionAudioUrls, answerLog.length);
     const result = await requestTextAnswer(view.sid, normalized);
-    if (result.kind === "network") {
-      setBusy(false);
-      setHold(true);
-      setNotice("网络失败，无法确认回答是否已提交。未自动重试。请刷新确认后再试。");
+    const resolved = await resolveSubmitResult(result, view.sid, "text");
+    if (resolved.flow === "navigated" || resolved.flow === "stopped") {
       return;
     }
-    if (result.kind === "http") {
-      const code = result.code ?? "";
-      if (code === "ANSWER_IN_PROGRESS") {
-        // 后端可能仍在处理或已被接管；结果未知，禁止再次提交。
-        setBusy(false);
-        setHold(true);
-        setNotice(
-          formatApiError(
-            result,
-            "提交失败",
-            "已保留当前输入。结果不明，请刷新确认后再试。未自动重发。",
-          ),
-        );
-        return;
-      }
-      submitLock.current = false;
-      setBusy(false);
-      if (code === "SCORING_UNAVAILABLE") {
-        setNotice(
-          formatApiError(result, "提交失败", "已保留当前输入，可人工重试。未自动重发。"),
-        );
-        return;
-      }
-      setNotice(formatApiError(result, "提交失败", "已保留当前输入。未自动重试。"));
-      return;
-    }
-    if (result.kind === "invalid") {
-      // HTTP 200 但无法解析时，后端很可能已推进；锁页禁止重复提交。
-      setBusy(false);
-      setHold(true);
-      setNotice(`${result.message} 结果不明，请刷新确认后再试。未自动重发。`);
+    const value = resolved.value;
+    if (!value) {
       return;
     }
 
@@ -491,9 +653,9 @@ export default function HomePage() {
       },
     ]);
 
-    if (result.value.type === "done") {
+    if (value.type === "done") {
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
-      router.push(`/reports/${view.sid}`);
+      router.push(reportPathForSid(view.sid));
       return;
     }
 
@@ -502,13 +664,15 @@ export default function HomePage() {
       mode: "real",
       job: view.job,
       sid: view.sid,
-      question: result.value.question,
-      isFollowup: result.value.type === "followup",
+      question: value.question,
+      isFollowup: value.type === "followup",
       startedAtMs: view.startedAtMs,
       transitionAudioUrls: view.transitionAudioUrls,
-      transitionAudioUrl: result.value.transitionAudioUrl,
+      transitionAudioUrl: value.transitionAudioUrl,
     });
     setAnswerText("");
+    setConfirmHref(null);
+    setNotice(null);
     submitLock.current = false;
     setBusy(false);
   }
@@ -618,6 +782,7 @@ export default function HomePage() {
           answerText={answerText}
           answerHint={answerHint}
           notice={notice}
+          confirmHref={confirmHref}
           busy={busy}
           hold={hold}
           voicePhase={voicePhase}
@@ -849,6 +1014,7 @@ function InterviewPanel({
   answerText,
   answerHint,
   notice,
+  confirmHref,
   busy,
   hold,
   voicePhase,
@@ -870,6 +1036,7 @@ function InterviewPanel({
   answerText: string;
   answerHint: string | null;
   notice: string | null;
+  confirmHref: string | null;
   busy: boolean;
   hold: boolean;
   voicePhase: "idle" | "recording" | "sending";
@@ -945,12 +1112,22 @@ function InterviewPanel({
           ) : null}
 
           {notice ? (
-            <p
+            <div
               className="mt-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
               role="alert"
             >
-              {notice}
-            </p>
+              <p>{notice}</p>
+              {confirmHref ? (
+                <p className="mt-2">
+                  <a
+                    className="underline decoration-[#ff8a2a] underline-offset-2 text-[#ffb067]"
+                    href={confirmHref}
+                  >
+                    打开报告页 {confirmHref}
+                  </a>
+                </p>
+              ) : null}
+            </div>
           ) : null}
 
           {mode === "real" ? (
