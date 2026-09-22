@@ -191,9 +191,11 @@ HTTP 状态码严格遵照 §8.1 规范：
 
 ## 5. ECharts 雷达图转换逻辑与配置规格 (零新增依赖)
 
-本实现直接使用已批准的 `echarts` 原生接口，利用 React `useEffect` + `useRef` 挂载，不引入 `echarts-for-react` 等未批准第三方包。
+本实现直接使用已批准的 `echarts`（精准锁定版本 `5.6.0`）原生接口，利用 React `useEffect` + `useRef` 挂载，不引入 `echarts-for-react` 等未批准第三方包。
 
-### 5.1 数据转换算法 (TypeScript 伪代码)
+### 5.1 数据转换算法 (`web/lib/report-data.ts`)
+
+为使 Node 22.22+ 原生测试运行器无需 JSX 转译即可直接导入测试，本算法与核心类型统一定义在独立纯逻辑模块 `web/lib/report-data.ts` 中，供页面组件 `web/app/reports/[sid]/page.tsx` 与单元测试 `web/tests/report.test.ts` 共同导入，避免在测试中复制代码。
 ```typescript
 interface DimensionData {
   score: number | null;
@@ -400,7 +402,7 @@ export function transformDimensionsToRadar(
 | :--- | :--- | :--- | :--- |
 | **加载中 (Loading)** | 接口响应返回前 | 全屏深色座舱骨架屏（Skeleton HUD），中央脉冲光波扩散，文案：“智驾面试仓正在解析考官双评证据与指标...” | 保持界面不抖动，禁用所有操作按钮 |
 | **会话不存在 (404)** | `code === "SESSION_NOT_FOUND"` | 深红微光警示面板，HUD 图标：“会话记录不存在或已被重置 (#sid)” | 提供按钮：“返回首页重新开始” (`href="/"`) |
-| **报告未生成 (404)** | `code === "REPORT_NOT_FOUND"` | 橙黄微光警示面板，HUD 图标：“该面试会话尚未完成全流程作答，未生成有效评价报告 (#sid)” | 提供操作按钮：“返回面试仓继续作答” (`href="/"`) 与“返回首页重新开始”，不执行虚假轮询重试 |
+| **报告未生成 (404)** | `code === "REPORT_NOT_FOUND"` | 橙黄微光提示面板，HUD 图标：“报告尚未生成 (#sid)” | 提供操作按钮：手动“刷新报告”与“返回首页” (`href="/"`)，不执行自动轮询，不提供无法恢复原 sid 状态的虚假作答入口 |
 | **网络异常 (5xx/断网)** | `fetch` 失败 / HTTP 500 / 503 | 红色边框告警卡：“座舱通信链路中断，请检查服务连通性” | 提供“重试加载”按钮 |
 | **非法 sid (422)** | URL 参数非正整数（如 `/reports/abc`） | 友好提示：“无效的报告访问地址，参数格式不合规” | 提供“返回主页”按钮 |
 | **整体分缺失** | `overall === null` | Overall 环形仪表中心显示 `--`，评级标注“待评估” | 正常渲染其他卡片，提示“当前有效评估不足” |
@@ -411,17 +413,18 @@ export function transformDimensionsToRadar(
 
 ## 8. 未来实施精确文件边界
 
-进入 T7-R1（报告页实现）时，**严格锁死文件边界**。必须使用已获批准的 `echarts: "^5.6.0"`（AGENTS.md §4、§10.1 已批准，MIT 协议），未经单独书面申请并获指挥官 Astra 批准，禁止修改任何额外文件：
+进入 T7-R1（报告页实现）时，**严格锁死文件边界**。必须使用已获批准的精准版本 `"echarts": "5.6.0"`（AGENTS.md §4、§10.1 已批准，MIT 协议，传递依赖由 lockfile 严格锁定），未经单独书面申请并获指挥官 Astra 批准，禁止修改任何额外文件：
 
-### 默认允许修改与创建边界（共 5 个文件）：
-1. `web/package.json`（声明安装已获批准的 `"echarts": "^5.6.0"` 生产依赖）
-2. `web/package-lock.json`（安装依赖后由 npm 自动生成的确定性锁文件）
-3. `web/app/reports/[sid]/page.tsx`（报告页核心组件、数据获取、ECharts 挂载与座舱 HMI 渲染逻辑）
-4. `web/app/globals.css`（仅限添加座舱微光动画、发光描边、深空背景等 CSS 工具类与 keyframes）
-5. `web/tests/report.test.ts`（报告页数据转换算法与降级逻辑的纯函数单元测试文件）
+### 默认允许修改与创建边界（共 6 个文件）：
+1. `web/package.json`（声明精准版本 `"echarts": "5.6.0"` 生产依赖，并在 scripts 中配置确定性的 `"test": "node --experimental-strip-types --test web/tests/report.test.ts"` 脚本）
+2. `web/package-lock.json`（安装依赖后由 npm 自动生成的确定性锁文件，锁定传递依赖）
+3. `web/lib/report-data.ts`（报告页纯数据转换函数、雷达图指标计算与可空维度降级逻辑，供页面与测试共同导入，避免 Node 原生测试直接导入 TSX）
+4. `web/app/reports/[sid]/page.tsx`（报告页核心组件、数据获取、ECharts 挂载与座舱 HMI 渲染逻辑，从 `web/lib/report-data.ts` 导入纯函数）
+5. `web/app/globals.css`（仅限添加座舱微光动画、发光描边、深空背景等 CSS 工具类与 keyframes）
+6. `web/tests/report.test.ts`（直接导入 `web/lib/report-data.ts` 进行纯函数单元测试，由 `npm test` 驱动）
 
 ### 扩界申请机制：
-若在实施中发现需抽取独立组件（如 `web/components/ReportRadar.tsx`）或公共类型文件（`web/types/report.ts`）：
+若在实施中发现需抽取独立组件（如 `web/components/ReportRadar.tsx`）或公共样式文件：
 - 必须先在任务单中声明文件路径、代码职责与扩界理由；
 - 获得指挥官 Astra 批准后方可建文件，禁止先行创建或跨界修改。
 
@@ -432,14 +435,14 @@ export function transformDimensionsToRadar(
 ### 9.1 测试机制分层与自动化用例设计 (T7-R1 前置)
 
 由于前端轻量工程未引入 Jest / JSDOM / React Testing Library 等重型 DOM 模拟测试库（AGENTS.md 强调零不必要依赖与极简构建），本规格将测试与验收严格分层：
-1. **纯数据转换与降级逻辑**：由 `web/tests/report.test.ts` 执行自动化单元测试；
+1. **纯数据转换与降级逻辑**：明确利用 Node 22.22+ 原生 TypeScript 类型剥离（Type Stripping）特性，由 `web/tests/report.test.ts` 直接导入纯逻辑模块 `web/lib/report-data.ts` 执行自动化单元测试，由 `web/package.json` 中的 `npm test` 脚本驱动；
 2. **静态类型安全**：通过 `npm run typecheck`（`tsc --noEmit`）验证；
 3. **真实后端数据契约回归**：通过 Python `pytest tests/test_text_flow.py tests/test_scoring.py` 验证真实落库 payload 与前端接口一致性；
 4. **DOM 视觉排版与 ECharts Canvas 渲染**：由 §9.2 的 30 秒人工验收路径覆盖，不夸大宣称 DOM 自动化能力。
 
-#### 自动化测试执行命令：
-- **纯函数单元测试**：`node --test web/tests/report.test.ts`（或 `npm test`）
-- **类型检查**：`npm run typecheck`（或 `npx tsc --noEmit`）
+#### 自动化测试执行命令（统一确定命令，不设二选一）：
+- **纯函数单元测试**：`npm test`（对应 `web/package.json` 中的执行定义严格为 `node --experimental-strip-types --test web/tests/report.test.ts`）
+- **类型检查**：`npm run typecheck`（对应 `web/package.json` 中的执行定义严格为 `tsc --noEmit`）
 - **后端契约集成**：`pytest tests/test_text_flow.py tests/test_scoring.py`
 
 #### 单元测试用例清单 (`web/tests/report.test.ts`)
@@ -474,7 +477,7 @@ export function transformDimensionsToRadar(
 ### 10.1 当前后端支撑结论
 - **结论**：当前后端的 `GET /api/reports/{sid}`（在 `server/api/reports.py` 实现）**完全足以支撑**上述报告页面的核心功能与全字段映射。现有字段已涵盖四维评分、原文字面证据、考官判词、亮点、顾虑、改进建议与 overall 综合分。
 - **关于 T4 过渡语字段**：T4 阶段新增的 `SessionCreateResponse.transition_audio_urls` 与 `AnswerResponse.transition_audio_url` 已正式获批并合入 `main`（提交 `757a62f` / `fdd74a1`）。报告页自身不消费过渡语音频，因此无任何过渡语契约遗留问题。
-- **关于成长追踪跳转**：严格遵循已获批的《成长追踪接口与身份规格（T7-G0）》（`docs/growth-tracking-spec.md`），学生身份由客户端当前活跃档案（`user_id`）确定，成长查询端点为 `GET /api/growth/{user_id}/history` 与 `GET /api/growth/{user_id}/trend?job_id=...`。报告页“查看成长记录”直接导航至 `/growth`（或可选携带 `/growth?job_id=${job_id}`），不引入未获支持的 `session_id` 查询参数。
+- **关于成长追踪跳转**：遵循《成长追踪接口与身份规格（T7-G0）》（`docs/growth-tracking-spec.md`），报告页“查看成长记录”统一约定导航至 `/growth`（或可选携带 `/growth?job_id=${job_id}` 用于岗位筛选），由成长页承载学生档案的选择与呈现；**不得宣称跨页面自动继承同一 `user_id`**，学生身份在会话与成长页之间的连续传递与持久化机制交由下游任务 T7-G1 定稿。绝不引入未获支持的 `session_id` 查询参数。
 
 ### 10.2 待队长批准事项 (契约缺口备忘)
 本规格书对后端 API 与数据库模型**无任何新增强制变更要求**。仅将以下非阻塞建议列为可选备忘：
