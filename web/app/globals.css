@@ -65,3 +65,64 @@ body {
     opacity: 1;
   }
 }
+
+/* T6 面试舱过场动画（1.5s 进入面试舱） */
+@keyframes cockpit-sweep {
+  0% {
+    transform: scale(0.72);
+    opacity: 0.15;
+    box-shadow: 0 0 0 rgba(47, 111, 237, 0);
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+    box-shadow: 0 0 56px rgba(47, 111, 237, 0.55);
+  }
+  100% {
+    transform: scale(0.72);
+    opacity: 0.15;
+    box-shadow: 0 0 0 rgba(47, 111, 237, 0);
+  }
+}
+
+.cockpit-sweep {
+  animation: cockpit-sweep 1.5s ease-in-out infinite;
+}
+
+/* 追问项橙色脉冲光圈 */
+.cockpit-pulse {
+  animation: cabin-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 24px rgba(249, 115, 22, 0.45);
+}
+
+/* 面试官波形声波跳动 */
+@keyframes wave-bar {
+  0%, 100% {
+    transform: scaleY(0.2);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.wave-bar {
+  animation: wave-bar 1.2s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+/* 字幕逐字亮起的光标闪烁 */
+@keyframes subtitle-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.subtitle-caret {
+  animation: subtitle-caret 0.9s step-end infinite;
+}

@@ -179,3 +179,135 @@ export class VoiceRecorder {
     void this.context.close().catch(() => undefined);
   }
 }
+
+export type ParseOk<T> = { ok: true; value: T };
+export type ParseErr = { ok: false; message: string };
+
+export type QuestionData = {
+  text: string;
+  audioUrl: string | null;
+  seq: number;
+};
+
+export type SessionCreateData = {
+  sid: number;
+  question: QuestionData;
+  transitionAudioUrls: string[];
+};
+
+export type AnswerData =
+  | { type: "followup"; question: QuestionData; transitionAudioUrl: string | null }
+  | { type: "next"; question: QuestionData; transitionAudioUrl: string | null }
+  | { type: "done"; reportId: number; transitionAudioUrl: string | null };
+
+export function parseSessionResponse(payload: unknown): ParseOk<SessionCreateData> | ParseErr {
+  const invalid =
+    "会话响应格式不正确：sid 须为正整数，question.text 须为非空字符串，seq 须为 1–6 的整数，audio_url 须为 null 或非空字符串。未进入面试。";
+  if (!isRecord(payload) || !isPositiveInt(payload.sid) || !isRecord(payload.question)) {
+    return { ok: false, message: invalid };
+  }
+  const q = payload.question;
+  if (
+    typeof q.text !== "string" ||
+    !q.text.trim() ||
+    !isPositiveInt(q.seq) ||
+    q.seq > 6 ||
+    !(q.audio_url === null || (typeof q.audio_url === "string" && q.audio_url.trim().length > 0))
+  ) {
+    return { ok: false, message: invalid };
+  }
+  const transitionAudioUrls: string[] = [];
+  if (Array.isArray(payload.transition_audio_urls)) {
+    for (const item of payload.transition_audio_urls) {
+      if (typeof item === "string" && item.trim()) {
+        transitionAudioUrls.push(item.trim());
+      }
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      sid: payload.sid,
+      question: {
+        text: q.text.trim(),
+        audioUrl: typeof q.audio_url === "string" ? q.audio_url.trim() : null,
+        seq: q.seq,
+      },
+      transitionAudioUrls,
+    },
+  };
+}
+
+export function parseAnswerResponse(payload: unknown): ParseOk<AnswerData> | ParseErr {
+  const invalid =
+    "回答响应格式不正确：type 须为 followup/next/done；followup/next 须含合法 question；done.report_id 须为正整数；transition_audio_url 若存在须为 null 或非空字符串。未推进题目。";
+  if (!isRecord(payload) || typeof payload.type !== "string") {
+    return { ok: false, message: invalid };
+  }
+  if (!isOptionalAudioUrl(payload.transition_audio_url)) {
+    return { ok: false, message: invalid };
+  }
+  const transitionAudioUrl =
+    typeof payload.transition_audio_url === "string" && payload.transition_audio_url.trim()
+      ? payload.transition_audio_url.trim()
+      : null;
+
+  if (payload.type === "done") {
+    if (!isPositiveInt(payload.report_id)) {
+      return { ok: false, message: invalid };
+    }
+    return {
+      ok: true,
+      value: {
+        type: "done",
+        reportId: payload.report_id,
+        transitionAudioUrl,
+      },
+    };
+  }
+
+  if (payload.type === "followup" || payload.type === "next") {
+    if (!isRecord(payload.question)) {
+      return { ok: false, message: invalid };
+    }
+    const q = payload.question;
+    if (
+      typeof q.text !== "string" ||
+      !q.text.trim() ||
+      !isPositiveInt(q.seq) ||
+      q.seq > 6 ||
+      !(q.audio_url === null || (typeof q.audio_url === "string" && q.audio_url.trim().length > 0))
+    ) {
+      return { ok: false, message: invalid };
+    }
+    return {
+      ok: true,
+      value: {
+        type: payload.type,
+        question: {
+          text: q.text.trim(),
+          audioUrl: typeof q.audio_url === "string" ? q.audio_url.trim() : null,
+          seq: q.seq,
+        },
+        transitionAudioUrl,
+      },
+    };
+  }
+
+  return { ok: false, message: invalid };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isPositiveInt(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+function isOptionalAudioUrl(v: unknown): boolean {
+  if (v === undefined || v === null) {
+    return true;
+  }
+  return typeof v === "string" && v.trim().length > 0;
+}

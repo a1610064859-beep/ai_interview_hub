@@ -80,3 +80,105 @@ describe("levelToUnit（电平环归一化）", () => {
     assert.equal(levelToUnit(10), 1);
   });
 });
+
+describe("parseSessionResponse（会话创建与过渡语数组提取）", () => {
+  it("正常解析包含 transition_audio_urls 的会话响应", async () => {
+    const { parseSessionResponse } = await import("../lib/recorder.ts");
+    const raw = {
+      sid: 1,
+      question: {
+        text: "请介绍你的专业背景？",
+        audio_url: "/audio/sess_1_q1.mp3",
+        seq: 1,
+      },
+      transition_audio_urls: [
+        "/audio/sess_1_trans_0.mp3",
+        "/audio/sess_1_trans_1.mp3",
+      ],
+    };
+    const res = parseSessionResponse(raw);
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.equal(res.value.sid, 1);
+      assert.equal(res.value.question.text, "请介绍你的专业背景？");
+      assert.equal(res.value.question.audioUrl, "/audio/sess_1_q1.mp3");
+      assert.equal(res.value.question.seq, 1);
+      assert.deepEqual(res.value.transitionAudioUrls, [
+        "/audio/sess_1_trans_0.mp3",
+        "/audio/sess_1_trans_1.mp3",
+      ]);
+    }
+  });
+
+  it("缺失 transition_audio_urls 时降级为空数组，不报错", async () => {
+    const { parseSessionResponse } = await import("../lib/recorder.ts");
+    const raw = {
+      sid: 2,
+      question: {
+        text: "请回答第二题",
+        audio_url: null,
+        seq: 2,
+      },
+    };
+    const res = parseSessionResponse(raw);
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.deepEqual(res.value.transitionAudioUrls, []);
+    }
+  });
+
+  it("非法 sid 或 question 严格拒绝", async () => {
+    const { parseSessionResponse } = await import("../lib/recorder.ts");
+    assert.equal(parseSessionResponse({ sid: 0, question: {} }).ok, false);
+    assert.equal(parseSessionResponse({ sid: 1, question: { text: "", seq: 1 } }).ok, false);
+    assert.equal(parseSessionResponse(null).ok, false);
+  });
+});
+
+describe("parseAnswerResponse（回答推进与过渡语响应解析）", () => {
+  it("正常解析 followup 响应与过渡音频", async () => {
+    const { parseAnswerResponse } = await import("../lib/recorder.ts");
+    const raw = {
+      type: "followup",
+      question: {
+        text: "能否进一步展开说明？",
+        audio_url: "/audio/sess_1_f1.mp3",
+        seq: 1,
+      },
+      transition_audio_url: "/audio/sess_1_trans_0.mp3",
+    };
+    const res = parseAnswerResponse(raw);
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.equal(res.value.type, "followup");
+      if (res.value.type === "followup") {
+        assert.equal(res.value.question.text, "能否进一步展开说明？");
+        assert.equal(res.value.transitionAudioUrl, "/audio/sess_1_trans_0.mp3");
+      }
+    }
+  });
+
+  it("正常解析 done 响应与 report_id", async () => {
+    const { parseAnswerResponse } = await import("../lib/recorder.ts");
+    const raw = {
+      type: "done",
+      report_id: 10,
+      transition_audio_url: null,
+    };
+    const res = parseAnswerResponse(raw);
+    assert.equal(res.ok, true);
+    if (res.ok) {
+      assert.equal(res.value.type, "done");
+      if (res.value.type === "done") {
+        assert.equal(res.value.reportId, 10);
+        assert.equal(res.value.transitionAudioUrl, null);
+      }
+    }
+  });
+
+  it("非法 type 或缺失 report_id 严格拒绝", async () => {
+    const { parseAnswerResponse } = await import("../lib/recorder.ts");
+    assert.equal(parseAnswerResponse({ type: "unknown" }).ok, false);
+    assert.equal(parseAnswerResponse({ type: "done", report_id: 0 }).ok, false);
+  });
+});
