@@ -400,7 +400,7 @@ export function transformDimensionsToRadar(
 | :--- | :--- | :--- | :--- |
 | **加载中 (Loading)** | 接口响应返回前 | 全屏深色座舱骨架屏（Skeleton HUD），中央脉冲光波扩散，文案：“智驾面试仓正在解析考官双评证据与指标...” | 保持界面不抖动，禁用所有操作按钮 |
 | **会话不存在 (404)** | `code === "SESSION_NOT_FOUND"` | 深红微光警示面板，HUD 图标：“会话记录不存在或已被重置 (#sid)” | 提供按钮：“返回首页重新开始” (`href="/"`) |
-| **报告未生成 (404)** | `code === "REPORT_NOT_FOUND"` | 橙黄呼吸等待面板：“面试作答已接收，考官评分正在落库中...” | 提供按钮：“刷新报告”，带 3 秒倒计时自动重试 |
+| **报告未生成 (404)** | `code === "REPORT_NOT_FOUND"` | 橙黄微光警示面板，HUD 图标：“该面试会话尚未完成全流程作答，未生成有效评价报告 (#sid)” | 提供操作按钮：“返回面试仓继续作答” (`href="/"`) 与“返回首页重新开始”，不执行虚假轮询重试 |
 | **网络异常 (5xx/断网)** | `fetch` 失败 / HTTP 500 / 503 | 红色边框告警卡：“座舱通信链路中断，请检查服务连通性” | 提供“重试加载”按钮 |
 | **非法 sid (422)** | URL 参数非正整数（如 `/reports/abc`） | 友好提示：“无效的报告访问地址，参数格式不合规” | 提供“返回主页”按钮 |
 | **整体分缺失** | `overall === null` | Overall 环形仪表中心显示 `--`，评级标注“待评估” | 正常渲染其他卡片，提示“当前有效评估不足” |
@@ -411,32 +411,45 @@ export function transformDimensionsToRadar(
 
 ## 8. 未来实施精确文件边界
 
-进入 T7-R1（报告页实现）时，**严格锁死文件边界**。未经单独书面申请并获 Astra 批准，禁止修改任何额外文件：
+进入 T7-R1（报告页实现）时，**严格锁死文件边界**。必须使用已获批准的 `echarts: "^5.6.0"`（AGENTS.md §4、§10.1 已批准，MIT 协议），未经单独书面申请并获指挥官 Astra 批准，禁止修改任何额外文件：
 
-### 默认允许修改边界：
-1. `web/app/reports/[sid]/page.tsx`（报告页核心组件与数据获取逻辑）
-2. `web/app/globals.css`（仅限添加座舱微光动画、发光边框等 CSS 工具类）
+### 默认允许修改与创建边界（共 5 个文件）：
+1. `web/package.json`（声明安装已获批准的 `"echarts": "^5.6.0"` 生产依赖）
+2. `web/package-lock.json`（安装依赖后由 npm 自动生成的确定性锁文件）
+3. `web/app/reports/[sid]/page.tsx`（报告页核心组件、数据获取、ECharts 挂载与座舱 HMI 渲染逻辑）
+4. `web/app/globals.css`（仅限添加座舱微光动画、发光描边、深空背景等 CSS 工具类与 keyframes）
+5. `web/tests/report.test.ts`（报告页数据转换算法与降级逻辑的纯函数单元测试文件）
 
 ### 扩界申请机制：
-若在实施中发现需抽取独立组件（如 `web/components/ReportRadar.tsx`）或公共类型（`web/types/report.ts`）：
-- 必须先在任务单中声明文件路径与理由；
-- 获得指挥官 Astra 批准后方可建文件，禁止先行创建。
+若在实施中发现需抽取独立组件（如 `web/components/ReportRadar.tsx`）或公共类型文件（`web/types/report.ts`）：
+- 必须先在任务单中声明文件路径、代码职责与扩界理由；
+- 获得指挥官 Astra 批准后方可建文件，禁止先行创建或跨界修改。
 
 ---
 
 ## 9. 验收矩阵（自动化与 30 秒人工验收）
 
-### 9.1 自动化测试用例清单 (T7-R1 前置)
-| 用例编号 | 测试目标 | 断言要点 |
+### 9.1 测试机制分层与自动化用例设计 (T7-R1 前置)
+
+由于前端轻量工程未引入 Jest / JSDOM / React Testing Library 等重型 DOM 模拟测试库（AGENTS.md 强调零不必要依赖与极简构建），本规格将测试与验收严格分层：
+1. **纯数据转换与降级逻辑**：由 `web/tests/report.test.ts` 执行自动化单元测试；
+2. **静态类型安全**：通过 `npm run typecheck`（`tsc --noEmit`）验证；
+3. **真实后端数据契约回归**：通过 Python `pytest tests/test_text_flow.py tests/test_scoring.py` 验证真实落库 payload 与前端接口一致性；
+4. **DOM 视觉排版与 ECharts Canvas 渲染**：由 §9.2 的 30 秒人工验收路径覆盖，不夸大宣称 DOM 自动化能力。
+
+#### 自动化测试执行命令：
+- **纯函数单元测试**：`node --test web/tests/report.test.ts`（或 `npm test`）
+- **类型检查**：`npm run typecheck`（或 `npx tsc --noEmit`）
+- **后端契约集成**：`pytest tests/test_text_flow.py tests/test_scoring.py`
+
+#### 单元测试用例清单 (`web/tests/report.test.ts`)
+| 用例编号 | 测试目标 | 执行方式与断言要点 |
 | :--- | :--- | :--- |
-| **R-T01** | 正常报告 200 响应完整渲染 | 验证 overall 大数字、岗位标题、亮点、顾虑、改进清单均在 DOM 存在 |
-| **R-T02** | 文本模式 `expression_fluency=null` | 断言流畅度卡片存在文案“未评估”及“文本模式”，**不存在数值 0** |
-| **R-T03** | 缺失 1 维时的 3 轴雷达图转换 | 验证 ECharts indicator 数组长度为 3，无流畅度轴 |
-| **R-T04** | 缺失 ≥2 维时的雷达图优雅降级 | 验证不渲染雷达图 canvas，页面渲染线性比对降级组件 |
-| **R-T05** | 全部维度为 null 极端报告 | 验证整体分为 `--`，页面渲染不崩溃，各卡片展示“未评估” |
-| **R-T06** | evidence 原话严格引用展示 | 验证 DOM 中包含与后端返回一致的原文字符串，带双引号标签 |
-| **R-T07** | 404 SESSION_NOT_FOUND 处理 | 模拟后端 404，验证页面渲染“面试会话不存在”错误卡与返回按钮 |
-| **R-T08** | 404 REPORT_NOT_FOUND 处理 | 模拟后端 404，验证页面渲染“报告尚未生成”等待卡与刷新按钮 |
+| **R-T01** | 正常 4 维有效数据转换 | 输入 4 个有效分数，调用 `transformDimensionsToRadar()`，断言 `canRenderRadar === true`，indicator 轴数严格为 4 |
+| **R-T02** | 文本模式流畅度为 null 转换 | 输入 `expression_fluency.score = null`，断言 `canRenderRadar === true`，indicator 轴数严格为 3（剔除流畅度轴），values 不包含 0 |
+| **R-T03** | 缺失 ≥2 维时的优雅降级 | 输入有效分数 < 3 个，断言 `canRenderRadar === false`，`radarOptions === null`，`validCount < 3` 触发线性降级标记 |
+| **R-T04** | 全部维度为 null 极端数据 | 输入 4 维分数全为 null，断言 `canRenderRadar === false`，`validCount === 0`，不抛出异常 |
+| **R-T05** | 证据原文字面值无损保留 | 验证带首尾空格、特殊标点与符号的原文字符串经数据传递原样保留，字面值完全一致 |
 
 ### 9.2 30 秒人工验收路径 (评审演练)
 1. **0–5 秒（主视觉第一印象）**：
@@ -450,7 +463,7 @@ export function transformDimensionsToRadar(
    - 确认引用短句字面完全等于作答原文，呈现考官判词。
 4. **22–30 秒（行动清单与闭环入口）**：
    - 快速浏览改进建议项（如 SOME/IP 实操总结、STAR 量化）；
-   - 确认底部“再次训练”按钮可点击响应；确认“查看成长记录”入口清晰醒目。
+   - 确认底部“再次训练”按钮点击正常导航回 `/`；确认“查看成长记录”入口清晰醒目，点击导航至 `/growth`。
 
 ---
 
@@ -460,14 +473,11 @@ export function transformDimensionsToRadar(
 
 ### 10.1 当前后端支撑结论
 - **结论**：当前后端的 `GET /api/reports/{sid}`（在 `server/api/reports.py` 实现）**完全足以支撑**上述报告页面的核心功能与全字段映射。现有字段已涵盖四维评分、原文字面证据、考官判词、亮点、顾虑、改进建议与 overall 综合分。
+- **关于 T4 过渡语字段**：T4 阶段新增的 `SessionCreateResponse.transition_audio_urls` 与 `AnswerResponse.transition_audio_url` 已正式获批并合入 `main`（提交 `757a62f` / `fdd74a1`）。报告页自身不消费过渡语音频，因此无任何过渡语契约遗留问题。
+- **关于成长追踪跳转**：严格遵循已获批的《成长追踪接口与身份规格（T7-G0）》（`docs/growth-tracking-spec.md`），学生身份由客户端当前活跃档案（`user_id`）确定，成长查询端点为 `GET /api/growth/{user_id}/history` 与 `GET /api/growth/{user_id}/trend?job_id=...`。报告页“查看成长记录”直接导航至 `/growth`（或可选携带 `/growth?job_id=${job_id}`），不引入未获支持的 `session_id` 查询参数。
 
 ### 10.2 待队长批准事项 (契约缺口备忘)
-以下两项不阻塞 M1 阶段报告页自身渲染，但涉及后续三端贯通，按纪律列为待批准项：
-1. **[待批准] 报告接口补充会话元信息（模式与时间）**：
+本规格书对后端 API 与数据库模型**无任何新增强制变更要求**。仅将以下非阻塞建议列为可选备忘：
+1. **[待批准-可选] 报告接口补充会话元信息（受众模式与时间）**：
    - 当前 `ReportResponse` 仅包含 `id, session_id, job_title, overall, dimensions, highlights, concerns, improvement`。
-   - 若报告页希望展示“评测时间（started_at）”与“受众模式（mode: 毕业生/新生）”，当前需要从数据库连表读取或单独查询。
-   - *建议*：M1 暂不修改 API，报告页 Header 暂不强依赖 started_at；若后续需要，在 T7-G1 中统一由队长批准将 `started_at` 和 `mode` 补充至 `ReportResponse`。
-2. **[待批准] 报告响应中的 transition 字段**：
-   - T4 阶段已向 `SessionCreateResponse` 补充 `transition_audio_urls`，向 `AnswerResponse` 补充 `transition_audio_url`，指挥官 Astra 已建议批准；报告接口本身不消费过渡语，无冲突。
-3. **[待批准] 成长追踪跳转传参约定**：
-   - 报告页“查看成长历史”按钮的跳转目标路径建议定为 `/growth?session_id=${sid}`（或根据 T7-G0 方案带 student_id/job_id），将在 T7-G1 实现时正式对接。
+   - 若报告页希望在 Header 中直接展示“评测时间（`started_at`）”与“受众模式（`mode`: 毕业生/新生）”，可由队长批准在后续 T7-G1 或 T8 中将此两字段补充至 `ReportResponse`。当前 M1 报告页不强依赖此信息，完全不阻塞 T7-R1 施工。
