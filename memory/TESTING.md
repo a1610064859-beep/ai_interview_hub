@@ -146,3 +146,35 @@
    - **转写结果**：`'我 们 使 用 canoe 进 行 智 能 汽 车 总 线 通 信 测 试 和 故 障 注 入'`
    - **首加载+转写耗时**：24.37 秒，RTF=0.242
    - **结论**：**H 严格断网验收通过**，无任何外网依赖，模型完全依赖本地缓存离线运行。
+
+## [T4-FIX] edge-tts 7.2.8 升级与真实合成验证
+
+说明：依据 [T4-FIX] 任务单，在分支 `feature/T4-edge-tts-7` 验证 `edge-tts==7.2.8` 升级后的兼容性与真实合成。
+
+### 1. 环境与依赖锁定
+- Python 版本：3.11.9
+- 依赖变更：`requirements.txt` 精确锁定 `edge-tts==7.2.8`
+- pip 解析结果：卸载 `edge-tts-6.1.19`，安装 `edge-tts-7.2.8` 及唯一新增子依赖 `tabulate-0.10.0`，无其他冲突
+
+### 2. 真实执行与 ffprobe 校验
+- 执行调用：`Communicate("你好", voice="zh-CN-XiaoxiaoNeural").save("hello.mp3")`
+- 文件检查：生成 MP3 存在且非空（7200 字节）
+- ffprobe 验证输出：
+  - `codec_name=mp3`
+  - `format_name=mp3`
+  - `duration=1.200000`
+
+### 3. 会话预取与静态服务验证
+- 服务端创建会话：`POST /api/sessions`（job_id=1）返回 HTTP 200，sid=1
+- 预取返回值：
+  - `question.audio_url`: `/audio/session_1_q1.mp3`
+  - `transition_audio_urls`: 3 条过渡音频 URL
+- 静态路由验证：
+  - `GET /audio/session_1_q1.mp3` → HTTP 200，`content-type: audio/mpeg`，大小 24048 字节
+  - 3 条过渡语经 `/audio/...` 访问均返回 HTTP 200
+- 降级验证：模拟网络异常时，会话创建不阻塞，`audio_url` 平稳降级为 `None`
+
+### 4. 自动化测试回归
+- `tests/test_tts.py`：9 passed，全绿通过（包含新增真实合成与 ffprobe 结构测试）
+- 全量 pytest：70 项测试全数通过（69 passed, 1 skipped [真实 ASR 门控]）
+- 临时文件清理：无任何 `.mp3` 残留，工作区干净

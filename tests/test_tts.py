@@ -296,3 +296,34 @@ async def test_tts_atomic_write_and_no_corrupt_fragments_reused(tmp_path):
         assert len(tmp_files) == 0
         # 绝不被当作有效音频复用
         assert tts.get_audio_url_if_exists(target_mp3.name) is None
+
+
+@pytest.mark.anyio
+async def test_edge_tts_v7_real_synthesis_and_ffprobe(tmp_path):
+    """[T4-FIX] 验证 edge-tts 7.2.8 真实网络合成、生成 MP3 文件大小与 ffprobe 容器格式。"""
+    import subprocess
+    import edge_tts
+
+    assert edge_tts.__version__ == "7.2.8"
+
+    audio_dir = tmp_path / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    test_mp3 = audio_dir / "real_v7_test.mp3"
+
+    # 1. 真实调用 Communicate.save
+    comm = edge_tts.Communicate("你好", settings.tts_voice)
+    await comm.save(str(test_mp3))
+
+    assert test_mp3.exists()
+    assert test_mp3.stat().st_size > 0
+
+    # 2. ffprobe 校验
+    res = subprocess.run([
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=format_name,duration:stream=codec_name",
+        "-of", "default=noprint_wrappers=1",
+        str(test_mp3)
+    ], capture_output=True, text=True, check=True)
+
+    assert "format_name=mp3" in res.stdout
+    assert "codec_name=mp3" in res.stdout
