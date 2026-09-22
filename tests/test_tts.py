@@ -299,6 +299,34 @@ async def test_tts_atomic_write_and_no_corrupt_fragments_reused(tmp_path):
         assert tts.get_audio_url_if_exists(target_mp3.name) is None
 
 
+@pytest.mark.anyio
+async def test_tts_disabled_does_not_reuse_residual_mp3(monkeypatch):
+    """TTS 关闭时：磁盘上已有非空目标 MP3 也不得复用；预取与 URL 查询一律 None，且不调用 edge-tts。"""
+    audio_dir = Path(settings.tts_output_dir)
+    q_file = audio_dir / "session_77_q1.mp3"
+    trans_file = audio_dir / "session_77_trans_0.mp3"
+    q_file.write_bytes(b"RESIDUAL_QUESTION_MP3_BYTES")
+    trans_file.write_bytes(b"RESIDUAL_TRANSITION_MP3_BYTES")
+    assert q_file.stat().st_size > 0
+    assert trans_file.stat().st_size > 0
+
+    monkeypatch.setattr(settings, "tts_enabled", False)
+
+    def _forbid_real_edge_tts(*args, **kwargs):
+        raise AssertionError("tts_enabled=False 时不得调用真实 edge-tts")
+
+    with patch("edge_tts.Communicate", side_effect=_forbid_real_edge_tts):
+        q_urls = await tts.prefetch_session_questions(77, ["残留题不应被复用"])
+        assert q_urls == {1: None}
+
+        trans_urls = await tts.prefetch_session_transitions(77)
+        assert trans_urls == [None] * len(settings.transition_lines_list)
+
+        assert tts.get_audio_url_if_exists(q_file.name) is None
+        assert tts.get_audio_url_if_exists(trans_file.name) is None
+        assert await tts.synthesize_to_file("也不应合成", q_file) is False
+
+
 @pytest.mark.skipif(
     os.environ.get("TTS_ACCEPTANCE_REAL") != "1",
     reason="需真实 edge-tts 网络验收",
