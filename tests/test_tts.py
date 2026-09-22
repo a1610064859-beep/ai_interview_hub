@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+import os
 import pytest
 from fastapi.testclient import TestClient
 
@@ -298,6 +299,10 @@ async def test_tts_atomic_write_and_no_corrupt_fragments_reused(tmp_path):
         assert tts.get_audio_url_if_exists(target_mp3.name) is None
 
 
+@pytest.mark.skipif(
+    os.environ.get("TTS_ACCEPTANCE_REAL") != "1",
+    reason="需真实 edge-tts 网络验收",
+)
 @pytest.mark.anyio
 async def test_edge_tts_v7_real_synthesis_and_ffprobe(tmp_path):
     """[T4-FIX] 验证 edge-tts 7.2.8 真实网络合成、生成 MP3 文件大小与 ffprobe 容器格式。"""

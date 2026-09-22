@@ -189,7 +189,8 @@
 - 降级验证：模拟网络异常时，会话创建不阻塞，`audio_url` 平稳降级为 `None`
 
 ### 4. 自动化测试回归
-- `tests/test_tts.py`：9 passed（含 `test_edge_tts_v7_real_synthesis_and_ffprobe`）
-- 全量 pytest：69 passed, 1 skipped；`git diff --check` 通过
-- 附带修复：`TTS_ENABLED=false` 时预取/URL 复用一律返回 `None`，避免磁盘残留 MP3 污染文本编排断言；`test_text_flow` autouse 关闭 TTS
-- 临时验证产物未入库；工作区仅允许任务文件变更
+- 真实验收门控：`test_edge_tts_v7_real_synthesis_and_ffprobe` 仅当 `TTS_ACCEPTANCE_REAL=1` 执行；未设置时 `pytest.skip`（理由：需真实 edge-tts 网络验收）
+- **普通门禁**（`TTS_ACCEPTANCE_REAL` 未设置，worktree `E:\ai_interview_hub_t4` 合入 main `73d363f` 后）：全量 pytest **68 passed, 2 skipped**（含真实 TTS 与 ASR 真实验收各 1 条），退出码 0
+- **真实 TTS 门禁**（`TTS_ACCEPTANCE_REAL=1`，仅跑 `test_edge_tts_v7_real_synthesis_and_ffprobe`）：**1 passed**，退出码 0；短句「你好」`mp3_bytes=7200`；ffprobe `format_name=mp3`，`codec_name=mp3`，`sample_rate=24000`，`channels=1`，`duration=1.200000`；跑完清除环境变量
+- 附带修复（既有提交）：`TTS_ENABLED=false` 时预取/URL 复用一律返回 `None`，避免磁盘残留 MP3 污染文本编排断言；`test_text_flow` autouse 关闭 TTS
+- 临时验证产物未入库；本定点修复仅改 `tests/test_tts.py` 与本文件
