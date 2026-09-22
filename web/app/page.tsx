@@ -1,8 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 const TOTAL_QUESTIONS = 6;
+const MOCK_FOLLOWUP_SEQ = 2;
+const MIN_ANSWER_LEN = 1;
+const MAX_ANSWER_LEN = 5000;
 
 type ApiMode = "mock" | "real";
 
@@ -25,24 +29,37 @@ type View =
   | { phase: "empty" }
   | { phase: "error"; message: string }
   | { phase: "jobs"; mode: ApiMode; jobs: Job[] }
-  | { phase: "interview"; mode: "mock"; job: Job; question: Question }
+  | {
+      phase: "interview";
+      mode: "mock";
+      job: Job;
+      question: Question;
+      isFollowup: boolean;
+      followupIssued: boolean;
+    }
   | {
       phase: "interview";
       mode: "real";
       job: Job;
       sid: number;
       question: Question;
-    };
+      isFollowup: boolean;
+    }
+  | { phase: "mock_done"; job: Job };
 
 type ParseOk<T> = { ok: true; value: T };
 type ParseErr = { ok: false; message: string };
 
 export default function HomePage() {
+  const router = useRouter();
   const [view, setView] = useState<View>(() => initialView());
   const [busy, setBusy] = useState(false);
   const [hold, setHold] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [answerText, setAnswerText] = useState("");
+  const [answerHint, setAnswerHint] = useState<string | null>(null);
   const createLock = useRef(false);
+  const submitLock = useRef(false);
 
   useEffect(() => {
     const mode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
@@ -76,13 +93,17 @@ export default function HomePage() {
     createLock.current = true;
     setBusy(true);
     setNotice(null);
+    setAnswerHint(null);
 
     if (mode === "mock") {
+      setAnswerText("");
       setView({
         phase: "interview",
         mode: "mock",
         job,
-        question: mockQuestion(),
+        question: mockMainQuestion(1),
+        isFollowup: false,
+        followupIssued: false,
       });
       setBusy(false);
       return;
@@ -108,13 +129,102 @@ export default function HomePage() {
       return;
     }
 
+    setAnswerText("");
     setView({
       phase: "interview",
       mode: "real",
       job,
       sid: result.sid,
       question: result.question,
+      isFollowup: false,
     });
+    setBusy(false);
+  }
+
+  async function submitAnswer() {
+    if (view.phase !== "interview" || submitLock.current || hold) {
+      return;
+    }
+
+    const normalized = answerText.trim();
+    if (normalized.length < MIN_ANSWER_LEN) {
+      setAnswerHint("回答不能为空（去除首尾空白后至少 1 个字符）。");
+      return;
+    }
+    if (normalized.length > MAX_ANSWER_LEN) {
+      setAnswerHint(`回答过长（去除首尾空白后最多 ${MAX_ANSWER_LEN} 字符）。`);
+      return;
+    }
+
+    submitLock.current = true;
+    setBusy(true);
+    setAnswerHint(null);
+    setNotice(null);
+
+    if (view.mode === "mock") {
+      const next = advanceMockInterview(view, normalized);
+      if (next.phase === "mock_done") {
+        setView(next);
+        setAnswerText("");
+        setBusy(false);
+        return;
+      }
+      setView(next);
+      setAnswerText("");
+      submitLock.current = false;
+      setBusy(false);
+      return;
+    }
+
+    const result = await requestTextAnswer(view.sid, normalized);
+    if (result.kind === "network") {
+      setBusy(false);
+      setHold(true);
+      setNotice("网络失败，无法确认回答是否已提交。未自动重试。请刷新确认后再试。");
+      return;
+    }
+    if (result.kind === "http") {
+      submitLock.current = false;
+      setBusy(false);
+      const code = result.code ?? "";
+      if (code === "SCORING_UNAVAILABLE") {
+        setNotice(
+          formatApiError(result, "提交失败", "已保留当前输入，可人工重试。未自动重发。"),
+        );
+        return;
+      }
+      if (code === "ANSWER_IN_PROGRESS") {
+        setNotice(
+          formatApiError(result, "提交失败", "已保留当前输入，请勿重复提交。未自动重发。"),
+        );
+        return;
+      }
+      setNotice(formatApiError(result, "提交失败", "已保留当前输入。未自动重试。"));
+      return;
+    }
+    if (result.kind === "invalid") {
+      submitLock.current = false;
+      setBusy(false);
+      setNotice(result.message);
+      return;
+    }
+
+    if (result.value.type === "done") {
+      // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
+      router.push(`/reports/${view.sid}`);
+      return;
+    }
+
+    setView({
+      phase: "interview",
+      mode: "real",
+      job: view.job,
+      sid: view.sid,
+      question: result.value.question,
+      isFollowup: result.value.type === "followup",
+    });
+    setAnswerText("");
+    submitLock.current = false;
     setBusy(false);
   }
 
@@ -123,7 +233,7 @@ export default function HomePage() {
       <header className="mb-8 min-w-0 max-w-full">
         <p className="text-sm tracking-[0.18em] text-[#7eb6ff]">智能汽车座舱</p>
         <h1 className="mt-2 text-3xl font-semibold text-white">智驾未来 · AI面试仓</h1>
-        <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">选择岗位，创建会话，查看首题。</p>
+        <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">选择岗位，文本作答，查看首题与进度。</p>
       </header>
 
       {view.phase === "config" ? <MessagePanel title="配置错误" message={view.message} /> : null}
@@ -140,7 +250,10 @@ export default function HomePage() {
             <ModeBadge mode={view.mode} />
           </div>
           {notice ? (
-            <p className="mb-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]" role="alert">
+            <p
+              className="mb-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
+              role="alert"
+            >
               {notice}
             </p>
           ) : null}
@@ -174,8 +287,32 @@ export default function HomePage() {
           mode={view.mode}
           job={view.job}
           question={view.question}
+          isFollowup={view.isFollowup}
           sid={view.mode === "real" ? view.sid : null}
+          answerText={answerText}
+          answerHint={answerHint}
+          notice={notice}
+          busy={busy}
+          hold={hold}
+          onAnswerChange={(value) => {
+            setAnswerText(value);
+            setAnswerHint(null);
+          }}
+          onSubmit={() => {
+            void submitAnswer();
+          }}
         />
+      ) : null}
+
+      {view.phase === "mock_done" ? (
+        <section className="min-w-0 max-w-full rounded-3xl border border-[#ff8a2a] bg-[#0c1730]/95 p-6">
+          <ModeBadge mode="mock" />
+          <h2 className="mt-4 text-2xl text-white">演示完成</h2>
+          <p className="mt-3 break-anywhere text-sm leading-6 text-[#b7c8e2]">
+            【非正式】已走完 6 题及固定一次追问。本模式不伪造真实 report_id，也不请求真实报告接口。岗位：
+            {view.job.title}
+          </p>
+        </section>
       ) : null}
     </main>
   );
@@ -185,25 +322,93 @@ function InterviewPanel({
   mode,
   job,
   question,
+  isFollowup,
   sid,
+  answerText,
+  answerHint,
+  notice,
+  busy,
+  hold,
+  onAnswerChange,
+  onSubmit,
 }: {
   mode: ApiMode;
   job: Job;
   question: Question;
+  isFollowup: boolean;
   sid: number | null;
+  answerText: string;
+  answerHint: string | null;
+  notice: string | null;
+  busy: boolean;
+  hold: boolean;
+  onAnswerChange: (value: string) => void;
+  onSubmit: () => void;
 }) {
+  const trimmedLen = answerText.trim().length;
+
   return (
     <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
         <ModeBadge mode={mode} />
-        <p className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a]/15 px-3 py-1 text-sm text-[#ffb067]">
-          第{question.seq}题 / 共{TOTAL_QUESTIONS}题
-        </p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {isFollowup ? (
+            <span className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-3 py-1 text-sm font-medium text-[#1a0d04]">
+              追问
+            </span>
+          ) : null}
+          <p className="rounded-full border border-[#ff8a2a] bg-[#ff8a2a]/15 px-3 py-1 text-sm text-[#ffb067]">
+            第{question.seq}题 / 共{TOTAL_QUESTIONS}题
+          </p>
+        </div>
       </div>
       <p className="mt-6 text-sm text-[#7eb6ff]">{job.family}</p>
       <h2 className="mt-1 break-anywhere text-2xl text-white">{job.title}</h2>
       {sid !== null ? <p className="mt-2 text-sm text-[#9fb4d4]">会话 {sid}</p> : null}
       <p className="mt-6 break-anywhere text-lg leading-8 text-white">{question.text}</p>
+      {question.audioUrl !== null ? (
+        <audio className="mt-4 max-w-full" controls src={question.audioUrl} preload="none">
+          当前浏览器不支持音频播放。
+        </audio>
+      ) : null}
+
+      {notice ? (
+        <p
+          className="mt-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
+          role="alert"
+        >
+          {notice}
+        </p>
+      ) : null}
+
+      <label className="mt-6 block min-w-0 max-w-full">
+        <span className="text-sm text-[#9fb4d4]">文本回答</span>
+        <textarea
+          className="mt-2 min-h-36 w-full max-w-full resize-y rounded-2xl border border-[#2f6fed] bg-[#070b14] px-4 py-3 text-sm leading-6 text-white outline-none focus:border-[#ff8a2a]"
+          value={answerText}
+          disabled={busy || hold}
+          onChange={(event) => {
+            onAnswerChange(event.target.value);
+          }}
+          placeholder="输入回答后提交。前后空白会被忽略，长度需在 1–5000 字。"
+        />
+      </label>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-3 text-xs text-[#9fb4d4]">
+        <span>已输入（去空白）{trimmedLen} / {MAX_ANSWER_LEN}</span>
+        {answerHint ? (
+          <span className="break-anywhere text-[#ffb067]" role="alert">
+            {answerHint}
+          </span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className="mt-4 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={busy || hold}
+        onClick={onSubmit}
+      >
+        {busy ? "正在提交…" : "提交回答"}
+      </button>
     </section>
   );
 }
@@ -282,11 +487,76 @@ function mockJobs(): Job[] {
   ];
 }
 
-function mockQuestion(): Question {
+function mockMainTexts(): string[] {
+  return [
+    "【非正式占位·第1题】请用一两句话介绍自己与智能汽车相关的学习或项目经历。",
+    "【非正式占位·第2题】你如何理解智驾测试中的场景覆盖？",
+    "【非正式占位·第3题】遇到传感器数据异常时，你会先检查哪些环节？",
+    "【非正式占位·第4题】请说明一次你排查问题的思路（非正式演示题）。",
+    "【非正式占位·第5题】团队协作中你如何同步风险与进度？（非正式）",
+    "【非正式占位·第6题】如果入职后前三个月，你会优先补齐哪项能力？",
+  ];
+}
+
+function mockMainQuestion(seq: number): Question {
+  const texts = mockMainTexts();
   return {
-    text: "【非正式占位】此文本不是正式面试题，仅供 mock 模式首题界面联调。",
+    text: texts[seq - 1] ?? texts[0],
     audioUrl: null,
-    seq: 1,
+    seq,
+  };
+}
+
+function mockFollowupQuestion(seq: number): Question {
+  return {
+    text: `【非正式追问·沿用第${seq}题】请再补充一个具体例子（演示固定追问，非正式数据）。`,
+    audioUrl: null,
+    seq,
+  };
+}
+
+type MockInterviewView = Extract<View, { phase: "interview"; mode: "mock" }>;
+
+function advanceMockInterview(
+  current: MockInterviewView,
+  _normalizedAnswer: string,
+): MockInterviewView | Extract<View, { phase: "mock_done" }> {
+  if (current.isFollowup) {
+    if (current.question.seq >= TOTAL_QUESTIONS) {
+      return { phase: "mock_done", job: current.job };
+    }
+    return {
+      phase: "interview",
+      mode: "mock",
+      job: current.job,
+      question: mockMainQuestion(current.question.seq + 1),
+      isFollowup: false,
+      followupIssued: current.followupIssued,
+    };
+  }
+
+  if (current.question.seq === MOCK_FOLLOWUP_SEQ && !current.followupIssued) {
+    return {
+      phase: "interview",
+      mode: "mock",
+      job: current.job,
+      question: mockFollowupQuestion(MOCK_FOLLOWUP_SEQ),
+      isFollowup: true,
+      followupIssued: true,
+    };
+  }
+
+  if (current.question.seq >= TOTAL_QUESTIONS) {
+    return { phase: "mock_done", job: current.job };
+  }
+
+  return {
+    phase: "interview",
+    mode: "mock",
+    job: current.job,
+    question: mockMainQuestion(current.question.seq + 1),
+    isFollowup: false,
+    followupIssued: current.followupIssued,
   };
 }
 
@@ -390,6 +660,49 @@ async function requestRealSession(jobId: number): Promise<RealSessionResult> {
   return { kind: "ok", sid: parsed.value.sid, question: parsed.value.question };
 }
 
+type AnswerOk =
+  | { type: "followup"; question: Question }
+  | { type: "next"; question: Question }
+  | { type: "done"; reportId: number };
+
+type TextAnswerResult =
+  | { kind: "network" }
+  | { kind: "http"; status: number; code: string | null; serverMessage: string | null }
+  | { kind: "invalid"; message: string }
+  | { kind: "ok"; value: AnswerOk };
+
+async function requestTextAnswer(sid: number, answerText: string): Promise<TextAnswerResult> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/sessions/${sid}/answers/text`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ answer_text: answerText }),
+      cache: "no-store",
+    });
+  } catch {
+    return { kind: "network" };
+  }
+  if (!response.ok) {
+    const info = await readApiError(response);
+    return { kind: "http", ...info };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { kind: "invalid", message: "回答响应不是合法 JSON。未推进题目。" };
+  }
+  const parsed = parseAnswerResponse(payload);
+  if (!parsed.ok) {
+    return { kind: "invalid", message: parsed.message };
+  }
+  return { kind: "ok", value: parsed.value };
+}
+
 function parseJobs(payload: unknown): ParseOk<Job[]> | ParseErr {
   if (!isRecord(payload) || !Array.isArray(payload.jobs)) {
     return {
@@ -427,27 +740,69 @@ function parseSession(payload: unknown): ParseOk<{ sid: number; question: Questi
   if (!isRecord(payload) || !isPositiveInt(payload.sid) || !isRecord(payload.question)) {
     return { ok: false, message: invalid };
   }
-  const question = payload.question;
-  if (typeof question.text !== "string" || question.text.trim().length === 0) {
-    return { ok: false, message: invalid };
-  }
-  if (!isQuestionSeq(question.seq)) {
-    return { ok: false, message: invalid };
-  }
-  if (!isAudioUrl(question.audio_url)) {
+  const question = parseQuestion(payload.question);
+  if (!question) {
     return { ok: false, message: invalid };
   }
   return {
     ok: true,
     value: {
       sid: payload.sid,
-      question: {
-        text: question.text,
-        audioUrl: question.audio_url,
-        seq: question.seq,
-      },
+      question,
     },
   };
+}
+
+function parseAnswerResponse(payload: unknown): ParseOk<AnswerOk> | ParseErr {
+  const invalid =
+    "回答响应格式不正确：type 须为 followup/next/done；followup/next 须含合法 question；done.report_id 须为正整数；transition_audio_url 若存在须为 null 或非空字符串。未推进题目。";
+  if (!isRecord(payload) || typeof payload.type !== "string") {
+    return { ok: false, message: invalid };
+  }
+  if (!isOptionalAudioUrl(payload.transition_audio_url)) {
+    return { ok: false, message: invalid };
+  }
+
+  if (payload.type === "done") {
+    if (!isPositiveInt(payload.report_id)) {
+      return { ok: false, message: invalid };
+    }
+    return { ok: true, value: { type: "done", reportId: payload.report_id } };
+  }
+
+  if (payload.type === "followup" || payload.type === "next") {
+    if (!isRecord(payload.question)) {
+      return { ok: false, message: invalid };
+    }
+    const question = parseQuestion(payload.question);
+    if (!question) {
+      return { ok: false, message: invalid };
+    }
+    return { ok: true, value: { type: payload.type, question } };
+  }
+
+  return { ok: false, message: invalid };
+}
+
+function parseQuestion(value: Record<string, unknown>): Question | null {
+  if (typeof value.text !== "string" || value.text.trim().length === 0) {
+    return null;
+  }
+  if (!isQuestionSeq(value.seq)) {
+    return null;
+  }
+  if (!isAudioUrl(value.audio_url)) {
+    return null;
+  }
+  return {
+    text: value.text,
+    audioUrl: value.audio_url,
+    seq: value.seq,
+  };
+}
+
+function isOptionalAudioUrl(value: unknown): boolean {
+  return value === undefined || isAudioUrl(value);
 }
 
 function isAudioUrl(value: unknown): value is string | null {
