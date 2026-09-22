@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from server.api.jobs import router as jobs_router
 from server.api.sessions import router as sessions_router
 from server.api.reports import router as reports_router
+from server.api.growth import router as growth_router
 from server.config import settings
 from server.db import init_db
 
@@ -28,6 +29,7 @@ app = FastAPI(
 app.include_router(jobs_router)
 app.include_router(sessions_router)
 app.include_router(reports_router)
+app.include_router(growth_router)
 
 
 @app.get("/audio/{filename:path}")

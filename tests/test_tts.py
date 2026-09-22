@@ -72,7 +72,7 @@ def test_tts_prefetch_six_fixed_questions_success():
     client = TestClient(app)
 
     with patch("server.services.tts.synthesize_to_file", side_effect=fake_synthesize_to_file):
-        resp = client.post("/api/sessions", json={"job_id": 1})
+        resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         assert resp.status_code == 200
         data = resp.json()
 
@@ -110,7 +110,7 @@ def test_tts_prefetch_single_failure_does_not_block():
         return await fake_synthesize_to_file(text, output_path)
 
     with patch("server.services.tts.synthesize_to_file", side_effect=fail_q3_synthesizer):
-        resp = client.post("/api/sessions", json={"job_id": 1})
+        resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         assert resp.status_code == 200
         data = resp.json()
 
@@ -149,7 +149,7 @@ def test_tts_all_failure_graceful_degradation():
         return False
 
     with patch("server.services.tts.synthesize_to_file", side_effect=all_fail_synthesizer):
-        resp = client.post("/api/sessions", json={"job_id": 1})
+        resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["question"]["audio_url"] is None
@@ -166,7 +166,7 @@ def test_tts_transition_audio_rotation():
     client = TestClient(app)
 
     with patch("server.services.tts.synthesize_to_file", side_effect=fake_synthesize_to_file):
-        resp = client.post("/api/sessions", json={"job_id": 1})
+        resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         # 过渡语配置了3条：嗯，我了解了 (0) | 请继续 (1) | 谢谢你的回答 (2)
@@ -208,7 +208,7 @@ def test_tts_dynamic_followup_failure_handled_gracefully():
         return await fake_synthesize_to_file(text, output_path)
 
     with patch("server.services.tts.synthesize_to_file", side_effect=fail_followup_synthesizer):
-        resp = client.post("/api/sessions", json={"job_id": 1})
+        resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         with patch("server.services.orchestrator.evaluate_followup", AsyncMock(return_value="请展开讲讲")):
@@ -228,10 +228,10 @@ def test_tts_audio_paths_do_not_collide_across_sessions():
     client = TestClient(app)
 
     with patch("server.services.tts.synthesize_to_file", side_effect=fake_synthesize_to_file):
-        resp1 = client.post("/api/sessions", json={"job_id": 1})
+        resp1 = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid1 = resp1.json()["sid"]
 
-        resp2 = client.post("/api/sessions", json={"job_id": 1})
+        resp2 = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid2 = resp2.json()["sid"]
         assert sid1 != sid2
 
@@ -252,7 +252,7 @@ def test_tts_static_audio_route_serving():
     client = TestClient(app)
 
     with patch("server.services.tts.synthesize_to_file", side_effect=fake_synthesize_to_file):
-        resp = client.post("/api/sessions", json={"job_id": 1})
+        resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         audio_url = resp.json()["question"]["audio_url"]
 
         # 请求有效静态音频
