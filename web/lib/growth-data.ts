@@ -3,6 +3,7 @@ import {
   REQUIRED_DIMENSIONS,
   type DimensionKey,
 } from "./report-data.ts";
+import { reportPathForSid } from "./session-recovery.ts";
 
 /** 受众模式（毕业生/新生），与输入模式 text/voice 无关。 */
 export type AudienceMode = "毕业生" | "新生";
@@ -462,6 +463,22 @@ export function buildReportHref(sid: number, userId: number, jobId: number): str
   return `/reports/${sid}?${params.toString()}`;
 }
 
+/**
+ * 报告跳转：有身份则带 user_id/job_id；无身份回退 session-recovery 的纯路径（禁止自递归）。
+ */
+export function resolveReportHref(
+  sid: number,
+  identity: InterviewIdentity | null | undefined,
+): string {
+  if (!isPositiveInteger(sid)) {
+    throw new Error("sid must be a positive integer");
+  }
+  if (!identity) {
+    return reportPathForSid(sid);
+  }
+  return buildReportHref(sid, identity.userId, identity.jobId);
+}
+
 export function parseIdentityFromSearchParams(
   get: (key: string) => string | null,
 ): InterviewIdentity | null {
@@ -501,72 +518,100 @@ export function inputModeLabel(mode: InputModeValue | "mixed" | null): string {
   return "未标识";
 }
 
+/** cohort 键：input_mode + scoring_version；null 版本归为 legacy。 */
+export function cohortIdentityKey(
+  inputMode: InputModeValue | null,
+  scoringVersion: string | null,
+): string {
+  const mode = inputMode ?? "unknown";
+  const ver = scoringVersion ?? "legacy";
+  return `${mode}|${ver}`;
+}
+
+export function cohortDisplayLabel(
+  inputMode: InputModeValue | null,
+  scoringVersion: string | null,
+): string {
+  const modePart =
+    inputMode === "text" ? "文本" : inputMode === "voice" ? "语音" : "未标识";
+  const verPart = scoringVersion ?? "legacy";
+  return `${modePart}·${verPart}`;
+}
+
+type TimelinePoint = {
+  sessionId: number;
+  overall: number | null;
+  dimensions: DimensionScoreMap;
+  inputMode: InputModeValue | null;
+  scoringVersion: string | null;
+};
+
+function buildTimeline(
+  trend: GrowthTrendData,
+  historyRecords: GrowthHistoryRecord[],
+): TimelinePoint[] {
+  const jobHistory = historyRecords.filter((r) => r.jobId === trend.jobId);
+  if (jobHistory.length > 0) {
+    return jobHistory.map((r) => ({
+      sessionId: r.sessionId,
+      overall: r.overall,
+      dimensions: r.dimensions,
+      inputMode: r.inputMode,
+      scoringVersion: r.scoringVersion,
+    }));
+  }
+  const fallbackMode: InputModeValue | null =
+    trend.inputMode === "text" || trend.inputMode === "voice" ? trend.inputMode : null;
+  return trend.points.map((p) => ({
+    sessionId: p.sessionId,
+    overall: p.overall,
+    dimensions: p.dimensions,
+    inputMode: fallbackMode,
+    scoringVersion: null,
+  }));
+}
+
+function uniqueCohortKeys(timeline: TimelinePoint[]): string[] {
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  for (const point of timeline) {
+    const key = cohortIdentityKey(point.inputMode, point.scoringVersion);
+    if (!seen.has(key)) {
+      seen.add(key);
+      keys.push(key);
+    }
+  }
+  return keys;
+}
+
+function parseCohortKey(key: string): {
+  inputMode: InputModeValue | null;
+  scoringVersion: string | null;
+} {
+  const [modeRaw, verRaw] = key.split("|");
+  const inputMode: InputModeValue | null =
+    modeRaw === "text" || modeRaw === "voice" ? modeRaw : null;
+  const scoringVersion = verRaw === "legacy" ? null : verRaw;
+  return { inputMode, scoringVersion };
+}
+
 /**
  * 折线图：null 保持为 null（不补 0）；connectNulls 恒为 false。
- * mixed 时不把文本/语音画成同一条可比较趋势线（仅散点/分模式系列）。
+ * 多 cohort（input_mode × scoring_version）时 overall 与四维全部拆系列，非本 cohort 填 null。
+ * 单 cohort 时保持一条综合分 + 四维折线。
  */
 export function transformTrendToLineOptions(
   trend: GrowthTrendData,
   historyRecords: GrowthHistoryRecord[] = [],
 ): Record<string, unknown> {
-  const categories = trend.points.map((p) => `#${p.sessionId}`);
   const connectNulls = false;
+  const timeline = buildTimeline(trend, historyRecords);
+  const categories = timeline.map((p) => `#${p.sessionId}`);
+  const cohortKeys = uniqueCohortKeys(timeline);
+  const multiCohort = cohortKeys.length > 1;
 
-  const dimensionSeries = REQUIRED_DIMENSIONS.map((key) => ({
-    name: DIMENSION_LABEL_MAP[key],
-    type: "line",
-    connectNulls,
-    data: trend.points.map((p) => p.dimensions[key]),
-  }));
-
-  const overallData = trend.points.map((p) => p.overall);
-
-  // mixed：禁止单一 overall 连线；若有历史记录则按 input_mode 拆系列
-  if (trend.inputMode === "mixed") {
-    const byMode: Record<string, (number | null)[]> = { text: [], voice: [], unknown: [] };
-    const cats: string[] = [];
-    const source =
-      historyRecords.length > 0
-        ? historyRecords.filter((r) => r.jobId === trend.jobId)
-        : trend.points.map((p) => ({
-            sessionId: p.sessionId,
-            overall: p.overall,
-            inputMode: null as InputModeValue | null,
-          }));
-    for (const rec of source) {
-      cats.push(`#${rec.sessionId}`);
-      const bucket =
-        rec.inputMode === "text" ? "text" : rec.inputMode === "voice" ? "voice" : "unknown";
-      for (const mode of ["text", "voice", "unknown"] as const) {
-        byMode[mode].push(mode === bucket ? rec.overall : null);
-      }
-    }
-    return {
-      tooltip: { trigger: "axis" },
-      legend: { data: ["文本 overall", "语音 overall", "未标识 overall"], textStyle: { color: "#9fb4d4" } },
-      xAxis: { type: "category", data: cats.length > 0 ? cats : categories, axisLabel: { color: "#9fb4d4" } },
-      yAxis: { type: "value", min: 0, max: 100, axisLabel: { color: "#9fb4d4" }, splitLine: { lineStyle: { color: "rgba(47,111,237,0.2)" } } },
-      series: [
-        { name: "文本 overall", type: "line", connectNulls, data: byMode.text },
-        { name: "语音 overall", type: "line", connectNulls, data: byMode.voice },
-        { name: "未标识 overall", type: "line", connectNulls, data: byMode.unknown },
-        ...dimensionSeries,
-      ],
-      _meta: { connectNulls: false, mixed: true },
-    };
-  }
-
-  return {
+  const baseChart = {
     tooltip: { trigger: "axis" },
-    legend: {
-      data: ["综合分", ...REQUIRED_DIMENSIONS.map((k) => DIMENSION_LABEL_MAP[k])],
-      textStyle: { color: "#9fb4d4" },
-    },
-    xAxis: {
-      type: "category",
-      data: categories,
-      axisLabel: { color: "#9fb4d4" },
-    },
     yAxis: {
       type: "value",
       min: 0,
@@ -574,11 +619,83 @@ export function transformTrendToLineOptions(
       axisLabel: { color: "#9fb4d4" },
       splitLine: { lineStyle: { color: "rgba(47,111,237,0.2)" } },
     },
-    series: [
-      { name: "综合分", type: "line", connectNulls, data: overallData },
-      ...dimensionSeries,
-    ],
-    _meta: { connectNulls: false, mixed: false },
+  };
+
+  if (!multiCohort) {
+    const dimensionSeries = REQUIRED_DIMENSIONS.map((key) => ({
+      name: DIMENSION_LABEL_MAP[key],
+      type: "line",
+      connectNulls,
+      data: timeline.map((p) => p.dimensions[key]),
+    }));
+    return {
+      ...baseChart,
+      legend: {
+        data: ["综合分", ...REQUIRED_DIMENSIONS.map((k) => DIMENSION_LABEL_MAP[k])],
+        textStyle: { color: "#9fb4d4" },
+      },
+      xAxis: {
+        type: "category",
+        data: categories,
+        axisLabel: { color: "#9fb4d4" },
+      },
+      series: [
+        {
+          name: "综合分",
+          type: "line",
+          connectNulls,
+          data: timeline.map((p) => p.overall),
+        },
+        ...dimensionSeries,
+      ],
+      _meta: { connectNulls: false, mixed: false, multiCohort: false, cohortCount: cohortKeys.length },
+    };
+  }
+
+  const series: Array<Record<string, unknown>> = [];
+  const legendData: string[] = [];
+  for (const key of cohortKeys) {
+    const { inputMode, scoringVersion } = parseCohortKey(key);
+    const label = cohortDisplayLabel(inputMode, scoringVersion);
+    const overallName = `${label} 综合分`;
+    legendData.push(overallName);
+    series.push({
+      name: overallName,
+      type: "line",
+      connectNulls,
+      data: timeline.map((p) =>
+        cohortIdentityKey(p.inputMode, p.scoringVersion) === key ? p.overall : null,
+      ),
+    });
+    for (const dim of REQUIRED_DIMENSIONS) {
+      const dimName = `${label} ${DIMENSION_LABEL_MAP[dim]}`;
+      legendData.push(dimName);
+      series.push({
+        name: dimName,
+        type: "line",
+        connectNulls,
+        data: timeline.map((p) =>
+          cohortIdentityKey(p.inputMode, p.scoringVersion) === key ? p.dimensions[dim] : null,
+        ),
+      });
+    }
+  }
+
+  return {
+    ...baseChart,
+    legend: { data: legendData, textStyle: { color: "#9fb4d4" } },
+    xAxis: {
+      type: "category",
+      data: categories,
+      axisLabel: { color: "#9fb4d4" },
+    },
+    series,
+    _meta: {
+      connectNulls: false,
+      mixed: true,
+      multiCohort: true,
+      cohortCount: cohortKeys.length,
+    },
   };
 }
 
@@ -610,4 +727,21 @@ export function lineSeriesHasNullNotZero(
   const target = series.find((s) => isRecord(s) && s.name === seriesName);
   if (!isRecord(target) || !Array.isArray(target.data)) return false;
   return target.data[expectedNullIndex] === null;
+}
+
+export function getSeriesDataByName(
+  options: Record<string, unknown>,
+  seriesName: string,
+): Array<number | null> | null {
+  const series = options.series;
+  if (!Array.isArray(series)) return null;
+  const target = series.find((s) => isRecord(s) && s.name === seriesName);
+  if (!isRecord(target) || !Array.isArray(target.data)) return null;
+  return target.data as Array<number | null>;
+}
+
+export function allSeriesConnectNullsFalse(options: Record<string, unknown>): boolean {
+  const series = options.series;
+  if (!Array.isArray(series) || series.length === 0) return false;
+  return series.every((s) => isRecord(s) && s.connectNulls === false);
 }

@@ -13,18 +13,23 @@ import {
 } from "../lib/report-data.ts";
 import {
   AUDIENCE_MODES,
+  allSeriesConnectNullsFalse,
   assertLineOptionsNoZeroFill,
   buildGrowthHref,
   buildReportHref,
   buildSessionCreateBody,
   canCreateSession,
+  cohortDisplayLabel,
+  cohortIdentityKey,
   comparisonReasonLabel,
   formatDeltaOrUnevaluated,
   formatScoreOrUnevaluated,
+  getSeriesDataByName,
   lineSeriesHasNullNotZero,
   parseGrowthHistoryResponse,
   parseGrowthTrendResponse,
   parseStudentsResponse,
+  resolveReportHref,
   transformTrendToLineOptions,
   type GrowthHistoryRecord,
   type GrowthTrendData,
@@ -446,8 +451,20 @@ describe("growth-data null / connectNulls / incomparable", () => {
       },
     ];
     const mixedOpts = transformTrendToLineOptions(mixed, history);
+    assert.equal((mixedOpts._meta as { multiCohort: boolean }).multiCohort, true);
     assert.equal((mixedOpts._meta as { mixed: boolean }).mixed, true);
     assert.equal(assertLineOptionsNoZeroFill(mixedOpts), true);
+    assert.equal(allSeriesConnectNullsFalse(mixedOpts), true);
+    // text/voice 的 overall 与内容维度不跨模式连线
+    const textOverall = getSeriesDataByName(mixedOpts, "文本·v1 综合分");
+    const voiceOverall = getSeriesDataByName(mixedOpts, "语音·v1 综合分");
+    const textProf = getSeriesDataByName(mixedOpts, "文本·v1 专业匹配度");
+    assert.ok(textOverall && voiceOverall && textProf);
+    assert.deepEqual(textOverall, [75, null]);
+    assert.deepEqual(voiceOverall, [null, 78]);
+    assert.deepEqual(textProf, [73, null]);
+    assert.equal(voiceOverall[0], null);
+    assert.equal(textOverall[1], null);
 
     const versionMismatch = parseGrowthTrendResponse(
       trendPayload({
@@ -532,5 +549,336 @@ describe("growth-data invalid responses", () => {
     );
     assert.throws(() => parseGrowthTrendResponse({ user_id: 3 }));
     assert.throws(() => buildSessionCreateBody(0, 1, "毕业生"));
+  });
+});
+
+describe("growth-data report href + cohort 连线（Astra 定点）", () => {
+  it("无身份报告地址不递归，精确返回 /reports/{sid}", () => {
+    assert.equal(resolveReportHref(5, null), "/reports/5");
+    assert.equal(resolveReportHref(12, undefined), "/reports/12");
+  });
+
+  it("有身份报告地址携带 user_id/job_id", () => {
+    assert.equal(
+      resolveReportHref(11, { userId: 3, jobId: 1 }),
+      "/reports/11?user_id=3&job_id=1",
+    );
+    assert.equal(buildReportHref(11, 3, 1), "/reports/11?user_id=3&job_id=1");
+  });
+
+  it("text/voice 的 overall 与内容维度不跨模式连线", () => {
+    const trend = parseGrowthTrendResponse(
+      trendPayload({
+        input_mode: "mixed",
+        sessions_count: 2,
+        points: [
+          {
+            session_id: 1,
+            report_id: 1,
+            started_at: "2026-09-20T10:00:00",
+            overall: 70,
+            dimensions: baseDims({ professional_match: 68 }),
+          },
+          {
+            session_id: 2,
+            report_id: 2,
+            started_at: "2026-09-21T10:00:00",
+            overall: 80,
+            dimensions: baseDims({
+              professional_match: 75,
+              expression_fluency: 82,
+            }),
+          },
+        ],
+        overall_comparison: {
+          comparable: false,
+          reasons: ["INPUT_MODE_MISMATCH"],
+          message: "不可比",
+          previous: null,
+          current: null,
+          delta: null,
+        },
+      }),
+    );
+    const history: GrowthHistoryRecord[] = [
+      {
+        sessionId: 1,
+        reportId: 1,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-20T10:00:00",
+        mode: "毕业生",
+        inputMode: "text",
+        scoringVersion: "v1",
+        overall: 70,
+        dimensions: {
+          professional_match: 68,
+          logic_structure: 72,
+          expression_fluency: null,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+      {
+        sessionId: 2,
+        reportId: 2,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-21T10:00:00",
+        mode: "毕业生",
+        inputMode: "voice",
+        scoringVersion: "v1",
+        overall: 80,
+        dimensions: {
+          professional_match: 75,
+          logic_structure: 72,
+          expression_fluency: 82,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+    ];
+    const opts = transformTrendToLineOptions(trend, history);
+    assert.deepEqual(getSeriesDataByName(opts, "文本·v1 综合分"), [70, null]);
+    assert.deepEqual(getSeriesDataByName(opts, "语音·v1 综合分"), [null, 80]);
+    assert.deepEqual(getSeriesDataByName(opts, "文本·v1 专业匹配度"), [68, null]);
+    assert.deepEqual(getSeriesDataByName(opts, "语音·v1 专业匹配度"), [null, 75]);
+    assert.equal(allSeriesConnectNullsFalse(opts), true);
+  });
+
+  it("voice-v1 与 voice-v2 不跨版本连线", () => {
+    const trend = parseGrowthTrendResponse(
+      trendPayload({
+        input_mode: "voice",
+        sessions_count: 2,
+        points: [
+          {
+            session_id: 3,
+            report_id: 3,
+            started_at: "2026-09-20T10:00:00",
+            overall: 71,
+            dimensions: baseDims({ expression_fluency: 80 }),
+          },
+          {
+            session_id: 4,
+            report_id: 4,
+            started_at: "2026-09-21T10:00:00",
+            overall: 79,
+            dimensions: baseDims({ expression_fluency: 85 }),
+          },
+        ],
+        overall_comparison: {
+          comparable: false,
+          reasons: ["SCORING_VERSION_MISMATCH"],
+          message: "版本不同",
+          previous: null,
+          current: null,
+          delta: null,
+        },
+      }),
+    );
+    const history: GrowthHistoryRecord[] = [
+      {
+        sessionId: 3,
+        reportId: 3,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-20T10:00:00",
+        mode: "毕业生",
+        inputMode: "voice",
+        scoringVersion: "v1",
+        overall: 71,
+        dimensions: {
+          professional_match: 68,
+          logic_structure: 72,
+          expression_fluency: 80,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+      {
+        sessionId: 4,
+        reportId: 4,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-21T10:00:00",
+        mode: "毕业生",
+        inputMode: "voice",
+        scoringVersion: "v2",
+        overall: 79,
+        dimensions: {
+          professional_match: 68,
+          logic_structure: 72,
+          expression_fluency: 85,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+    ];
+    const opts = transformTrendToLineOptions(trend, history);
+    assert.equal((opts._meta as { multiCohort: boolean }).multiCohort, true);
+    assert.deepEqual(getSeriesDataByName(opts, "语音·v1 综合分"), [71, null]);
+    assert.deepEqual(getSeriesDataByName(opts, "语音·v2 综合分"), [null, 79]);
+    assert.deepEqual(getSeriesDataByName(opts, "语音·v1 表达流畅度"), [80, null]);
+    assert.deepEqual(getSeriesDataByName(opts, "语音·v2 表达流畅度"), [null, 85]);
+  });
+
+  it("legacy 与 v1 分离，不与 v1 连线", () => {
+    assert.equal(cohortIdentityKey("voice", null), "voice|legacy");
+    assert.equal(cohortDisplayLabel("voice", null), "语音·legacy");
+    assert.equal(cohortIdentityKey("voice", "v1"), "voice|v1");
+
+    const trend = parseGrowthTrendResponse(
+      trendPayload({
+        input_mode: "mixed",
+        sessions_count: 2,
+        points: [
+          {
+            session_id: 5,
+            report_id: 5,
+            started_at: "2026-09-20T10:00:00",
+            overall: 66,
+            dimensions: baseDims(),
+          },
+          {
+            session_id: 6,
+            report_id: 6,
+            started_at: "2026-09-21T10:00:00",
+            overall: 74,
+            dimensions: baseDims({ professional_match: 72 }),
+          },
+        ],
+        overall_comparison: {
+          comparable: false,
+          reasons: ["SCORING_VERSION_UNKNOWN"],
+          message: "legacy",
+          previous: null,
+          current: null,
+          delta: null,
+        },
+      }),
+    );
+    const history: GrowthHistoryRecord[] = [
+      {
+        sessionId: 5,
+        reportId: 5,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-20T10:00:00",
+        mode: "毕业生",
+        inputMode: "text",
+        scoringVersion: null,
+        overall: 66,
+        dimensions: {
+          professional_match: 68,
+          logic_structure: 72,
+          expression_fluency: null,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+      {
+        sessionId: 6,
+        reportId: 6,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-21T10:00:00",
+        mode: "毕业生",
+        inputMode: "text",
+        scoringVersion: "v1",
+        overall: 74,
+        dimensions: {
+          professional_match: 72,
+          logic_structure: 72,
+          expression_fluency: null,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+    ];
+    const opts = transformTrendToLineOptions(trend, history);
+    assert.deepEqual(getSeriesDataByName(opts, "文本·legacy 综合分"), [66, null]);
+    assert.deepEqual(getSeriesDataByName(opts, "文本·v1 综合分"), [null, 74]);
+  });
+
+  it("单 cohort 保持 overall + 四维折线", () => {
+    const trend = parseGrowthTrendResponse(trendPayload());
+    const history: GrowthHistoryRecord[] = [
+      {
+        sessionId: 11,
+        reportId: 11,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-20T10:00:00",
+        mode: "毕业生",
+        inputMode: "text",
+        scoringVersion: "v1",
+        overall: 70,
+        dimensions: {
+          professional_match: 68,
+          logic_structure: 72,
+          expression_fluency: null,
+          job_competence: 70,
+        },
+        improvement: [],
+      },
+      {
+        sessionId: 12,
+        reportId: 12,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-20T16:00:00",
+        mode: "毕业生",
+        inputMode: "text",
+        scoringVersion: "v1",
+        overall: 72.5,
+        dimensions: {
+          professional_match: 71,
+          logic_structure: 74,
+          expression_fluency: null,
+          job_competence: 72.5,
+        },
+        improvement: [],
+      },
+      {
+        sessionId: 13,
+        reportId: 13,
+        jobId: 1,
+        jobTitle: "智驾测试工程师",
+        startedAt: "2026-09-21T09:00:00",
+        mode: "毕业生",
+        inputMode: "text",
+        scoringVersion: "v1",
+        overall: 75,
+        dimensions: {
+          professional_match: 73,
+          logic_structure: 76,
+          expression_fluency: null,
+          job_competence: 76,
+        },
+        improvement: [],
+      },
+    ];
+    const opts = transformTrendToLineOptions(trend, history);
+    assert.equal((opts._meta as { multiCohort: boolean }).multiCohort, false);
+    assert.ok(getSeriesDataByName(opts, "综合分"));
+    assert.ok(getSeriesDataByName(opts, "专业匹配度"));
+    assert.equal(getSeriesDataByName(opts, "文本·v1 综合分"), null);
+    assert.deepEqual(getSeriesDataByName(opts, "综合分"), [70, 72.5, 75]);
+    assert.equal(allSeriesConnectNullsFalse(opts), true);
+  });
+
+  it("null 保持 null 不补零，且全部系列 connectNulls=false", () => {
+    const trend = parseGrowthTrendResponse(trendPayload());
+    const opts = transformTrendToLineOptions(trend);
+    assert.equal(lineSeriesHasNullNotZero(opts, "表达流畅度", 0), true);
+    assert.equal(lineSeriesHasNullNotZero(opts, "表达流畅度", 1), true);
+    const fluency = getSeriesDataByName(opts, "表达流畅度");
+    assert.ok(fluency);
+    assert.equal(fluency[0], null);
+    assert.equal(fluency[1], null);
+    assert.equal(fluency[2], null);
+    assert.equal(allSeriesConnectNullsFalse(opts), true);
+    assert.equal((opts._meta as { connectNulls: boolean }).connectNulls, false);
   });
 });

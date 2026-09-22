@@ -19,7 +19,6 @@ import {
   CONFIRMING_NOTICE,
   TIMEOUT_NOTICE,
   isAmbiguousSubmitFailure,
-  reportPathForSid,
   resolveAfterAnswerSubmit,
   shouldConfirmReportReadOnly,
   type AnswerPostResult,
@@ -28,12 +27,12 @@ import {
 } from "../lib/session-recovery";
 import {
   AUDIENCE_MODES,
-  buildReportHref,
   buildSessionCreateBody,
   canCreateSession,
   loadInterviewIdentity,
   parseStudentsResponse,
   persistInterviewIdentity,
+  resolveReportHref,
   type AudienceMode,
   type StudentProfile,
 } from "../lib/growth-data";
@@ -134,12 +133,8 @@ export default function HomePage() {
   const [audienceMode, setAudienceMode] = useState<AudienceMode | null>("毕业生");
   const interviewIdentityRef = useRef<{ userId: number; jobId: number } | null>(null);
 
-  function reportHrefFor(sid: number): string {
-    const id = interviewIdentityRef.current;
-    if (!id) {
-      return reportHrefFor(sid);
-    }
-    return buildReportHref(sid, id.userId, id.jobId);
+  function buildInterviewReportHref(sid: number): string {
+    return resolveReportHref(sid, interviewIdentityRef.current);
   }
 
   useEffect(() => {
@@ -257,7 +252,7 @@ export default function HomePage() {
     channel: "voice" | "text",
   ): Promise<"navigated" | "advanced" | "stopped"> {
     if (outcome.outcome === "report_ready") {
-      router.push(reportHrefFor(sid));
+      router.push(buildInterviewReportHref(sid));
       return "navigated";
     }
     if (outcome.outcome === "answer_ok") {
@@ -351,10 +346,10 @@ export default function HomePage() {
       setBusy(false);
       setHold(true);
       if (outcome.reason === "timeout") {
-        setConfirmHref(reportHrefFor(sid));
+        setConfirmHref(buildInterviewReportHref(sid));
         setNotice(TIMEOUT_NOTICE);
       } else {
-        setConfirmHref(reportHrefFor(sid));
+        setConfirmHref(buildInterviewReportHref(sid));
         setNotice("结果状态仍未知，请打开报告页确认。未自动重发。");
       }
       return "stopped";
@@ -652,7 +647,7 @@ export default function HomePage() {
     if (value.type === "done") {
       voiceSubmitLockRef.current = false;
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
-      router.push(reportHrefFor(view.sid));
+      router.push(buildInterviewReportHref(view.sid));
       return;
     }
 
@@ -738,7 +733,7 @@ export default function HomePage() {
 
     if (value.type === "done") {
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
-      router.push(reportHrefFor(view.sid));
+      router.push(buildInterviewReportHref(view.sid));
       return;
     }
 

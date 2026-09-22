@@ -255,33 +255,6 @@
   - `ACCEPT_EXIT=0`；端口 `:18091` / `:34730` / `:9235` → CLEAN
 - 长评分断连恢复机制在合入后的 main 上已再验证；真人最终题全链路可作为 M2 关闭后的联调抽检项保留。
 
-<<<<<<< HEAD
-## T7-G1-FE 学生档案选择与成长追踪前端
-
-范围：`web/lib/growth-data.ts` 校验与折线转换；首页 real 模式学生/mode 选择与创建会话三字段；`/growth` 历史与趋势；报告页成长入口携带 `user_id`/`job_id`。不改 server、不改依赖。
-
-### 自动化
-
-| 项 | 状态 |
-| --- | --- |
-| growth-data 纯函数（请求体三项、双学生隔离、0/1/3 历史、null 不补零、connectNulls=false、不可比 reasons、报告链接、非法抛错） | 见 `npm test` |
-| `npm test` | 通过，退出码 0（52 pass） |
-| `npm run typecheck` | 通过，退出码 0 |
-| `npm run build` | 通过，退出码 0 |
-| `git diff --check` | 通过 |
-
-### 浏览器验收（mock/stub）
-
-- stub `:18092` + Next `:34731`（real rewrite）。
-- 首页/成长页 HTTP 200；`POST /api/sessions` 三字段 body → 200；仅 `job_id` → 422。
-- 学生4历史 `records:[]`（0 条空态数据源）。
-- 报告页成长链接为 CSR（加载报告后渲染）；`buildGrowthHref`/`buildReportHref` 由单元测试覆盖。
-- 验收后 `:18092` / `:34731` 已清理无监听。
-
-### 合入约束
-
-- 禁止直接合 main；经 Astra 审查后进入 `feature/T7-growth-integration`。
-=======
 ## [T5-FIX] FunASR 中文字间空格规范化与评分证据恢复
 
 范围：仅 `server/services/asr.py` 增加 `normalize_asr_text`，在 `transcribe_wav` 返回前折叠 CJK–CJK 空白；不改 `validate_evidence`、不放宽 25 字、不动 sid=5、不写 `SCORING_VERSION`。文本答题不经过本函数。
@@ -312,4 +285,50 @@
 | 全量 pytest | 72 passed, 2 skipped |
 | `ASR_ACCEPTANCE_REAL=1` 真实 FunASR | 通过：落库文本无 CJK–CJK 间空格 |
 | sid=5 | **未改写、未重跑**（保留缺陷样本） |
->>>>>>> main
+
+## T7-G1-FE 学生档案选择与成长追踪前端
+
+范围：`web/lib/growth-data.ts` 校验与折线转换；首页 real 模式学生/mode 选择与创建会话三字段；`/growth` 历史与趋势；报告页成长入口携带 `user_id`/`job_id`。不改 server、不改依赖。
+
+### 自动化
+
+| 项 | 状态 |
+| --- | --- |
+| growth-data 纯函数（请求体三项、双学生隔离、0/1/3 历史、null 不补零、connectNulls=false、不可比 reasons、报告链接、非法抛错） | 见 `npm test` |
+| `npm test` | 通过，退出码 0（52 pass） |
+| `npm run typecheck` | 通过，退出码 0 |
+| `npm run build` | 通过，退出码 0 |
+| `git diff --check` | 通过 |
+
+### 浏览器验收（mock/stub）
+
+- stub `:18092` + Next `:34731`（real rewrite）。
+- 首页/成长页 HTTP 200；`POST /api/sessions` 三字段 body → 200；仅 `job_id` → 422。
+- 学生4历史 `records:[]`（0 条空态数据源）。
+- 报告页成长链接为 CSR（加载报告后渲染）；`buildGrowthHref`/`buildReportHref` 由单元测试覆盖。
+- 验收后 `:18092` / `:34731` 已清理无监听。
+
+### 合入约束
+
+- 禁止直接合 main；经 Astra 审查后进入 `feature/T7-growth-integration`。
+
+## T7-G1-FE 定点修复（Astra 驳回 bc138de）
+
+范围：修复 `page.tsx` 无身份 `reportHrefFor` 自递归；趋势按 `(input_mode, scoring_version)` cohort 拆系列；同步 `main 6f2facb`。不改 T6 断连恢复、不改依赖/后端。
+
+### 修复点
+
+1. `resolveReportHref`：无身份 → `reportPathForSid`（`/reports/{sid}`）；有身份 → `?user_id=&job_id=`；本地函数改名 `buildInterviewReportHref`，禁止遮蔽。
+2. `transformTrendToLineOptions`：多 cohort 时 overall+四维全部拆系列，非本 cohort 填 null，`connectNulls=false`；text/voice、v1/v2、legacy 互不连线；单 cohort 保持综合分+四维。
+
+### 门禁
+
+| 检查 | 退出码 |
+| --- | --- |
+| `npm test` | 0（59 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build` | 0 |
+| 全量 pytest | 0（72 passed, 2 skipped） |
+| `git diff --check` | 见提交前 |
+
+不合入 main / integration；交 Astra 复审。
