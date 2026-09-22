@@ -193,20 +193,31 @@ HTTP 状态码严格遵照 §8.1 规范：
 
 本实现直接使用已批准的 `echarts`（精准锁定版本 `5.6.0`）原生接口，利用 React `useEffect` + `useRef` 挂载，不引入 `echarts-for-react` 等未批准第三方包。
 
-### 5.1 数据转换算法 (`web/lib/report-data.ts`)
+### 5.1 数据转换与解析模块 (`web/lib/report-data.ts`)
 
 为使 Node 22.22+ 原生测试运行器无需 JSX 转译即可直接导入测试，本算法与核心类型统一定义在独立纯逻辑模块 `web/lib/report-data.ts` 中，供页面组件 `web/app/reports/[sid]/page.tsx` 与单元测试 `web/tests/report.test.ts` 共同导入，避免在测试中复制代码。
 ```typescript
-interface DimensionData {
+export interface DimensionData {
   score: number | null;
   evidence: string | null;
   reason: string;
 }
 
-interface RadarTransformResult {
+export interface RadarTransformResult {
   canRenderRadar: boolean;
   radarOptions: echarts.EChartsOption | null;
   validCount: number;
+}
+
+export interface ReportData {
+  id: number;
+  session_id: number;
+  job_title: string;
+  overall: number | null;
+  dimensions: Record<string, DimensionData>;
+  highlights: string[];
+  concerns: string[];
+  improvement: string[];
 }
 
 const DIMENSION_LABEL_MAP: Record<string, string> = {
@@ -215,6 +226,42 @@ const DIMENSION_LABEL_MAP: Record<string, string> = {
   expression_fluency: "表达流畅度",
   job_competence: "岗位素养",
 };
+
+/**
+ * 严格解析并归一化后端报告响应，保证字段结构完整与字面证据无损（首尾空格、特殊符号严格原样保留）
+ */
+export function parseReportResponse(raw: unknown): ReportData {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Invalid report response: expected object");
+  }
+  const r = raw as Record<string, any>;
+  const rawDims = r.dimensions || {};
+  const dimensions: Record<string, DimensionData> = {};
+  for (const key of [
+    "professional_match",
+    "logic_structure",
+    "expression_fluency",
+    "job_competence",
+  ]) {
+    const d = rawDims[key];
+    dimensions[key] = {
+      score: d && typeof d.score === "number" && !isNaN(d.score) ? d.score : null,
+      evidence: d && typeof d.evidence === "string" ? d.evidence : null,
+      reason: d && typeof d.reason === "string" ? d.reason : "",
+    };
+  }
+
+  return {
+    id: typeof r.id === "number" ? r.id : 0,
+    session_id: typeof r.session_id === "number" ? r.session_id : 0,
+    job_title: typeof r.job_title === "string" ? r.job_title : "未知岗位",
+    overall: typeof r.overall === "number" && !isNaN(r.overall) ? r.overall : null,
+    dimensions,
+    highlights: Array.isArray(r.highlights) ? r.highlights : [],
+    concerns: Array.isArray(r.concerns) ? r.concerns : [],
+    improvement: Array.isArray(r.improvement) ? r.improvement : [],
+  };
+}
 
 export function transformDimensionsToRadar(
   dimensions: Record<string, DimensionData>
@@ -416,12 +463,12 @@ export function transformDimensionsToRadar(
 进入 T7-R1（报告页实现）时，**严格锁死文件边界**。必须使用已获批准的精准版本 `"echarts": "5.6.0"`（AGENTS.md §4、§10.1 已批准，MIT 协议，传递依赖由 lockfile 严格锁定），未经单独书面申请并获指挥官 Astra 批准，禁止修改任何额外文件：
 
 ### 默认允许修改与创建边界（共 6 个文件）：
-1. `web/package.json`（声明精准版本 `"echarts": "5.6.0"` 生产依赖，并在 scripts 中配置确定性的 `"test": "node --experimental-strip-types --test web/tests/report.test.ts"` 脚本）
+1. `web/package.json`（声明精准版本 `"echarts": "5.6.0"` 生产依赖，并在 scripts 中配置确定性的 `"test": "node --experimental-strip-types --test tests/report.test.ts"` 脚本，由 `web/` 根目录执行）
 2. `web/package-lock.json`（安装依赖后由 npm 自动生成的确定性锁文件，锁定传递依赖）
-3. `web/lib/report-data.ts`（报告页纯数据转换函数、雷达图指标计算与可空维度降级逻辑，供页面与测试共同导入，避免 Node 原生测试直接导入 TSX）
+3. `web/lib/report-data.ts`（报告页纯数据解析函数 `parseReportResponse`、雷达图指标计算 `transformDimensionsToRadar` 与可空维度降级逻辑，供页面与测试共同导入）
 4. `web/app/reports/[sid]/page.tsx`（报告页核心组件、数据获取、ECharts 挂载与座舱 HMI 渲染逻辑，从 `web/lib/report-data.ts` 导入纯函数）
 5. `web/app/globals.css`（仅限添加座舱微光动画、发光描边、深空背景等 CSS 工具类与 keyframes）
-6. `web/tests/report.test.ts`（直接导入 `web/lib/report-data.ts` 进行纯函数单元测试，由 `npm test` 驱动）
+6. `web/tests/report.test.ts`（以相对路径 `import { parseReportResponse, transformDimensionsToRadar } from "../lib/report-data.ts"` 导入纯函数进行单元测试，由 `npm test` 驱动）
 
 ### 扩界申请机制：
 若在实施中发现需抽取独立组件（如 `web/components/ReportRadar.tsx`）或公共样式文件：
@@ -435,13 +482,13 @@ export function transformDimensionsToRadar(
 ### 9.1 测试机制分层与自动化用例设计 (T7-R1 前置)
 
 由于前端轻量工程未引入 Jest / JSDOM / React Testing Library 等重型 DOM 模拟测试库（AGENTS.md 强调零不必要依赖与极简构建），本规格将测试与验收严格分层：
-1. **纯数据转换与降级逻辑**：明确利用 Node 22.22+ 原生 TypeScript 类型剥离（Type Stripping）特性，由 `web/tests/report.test.ts` 直接导入纯逻辑模块 `web/lib/report-data.ts` 执行自动化单元测试，由 `web/package.json` 中的 `npm test` 脚本驱动；
+1. **纯数据转换与降级逻辑**：明确利用 Node 22.22+ 原生 TypeScript 类型剥离（Type Stripping）特性，由 `web/tests/report.test.ts` 以相对路径 `import { parseReportResponse, transformDimensionsToRadar } from "../lib/report-data.ts"` 导入纯逻辑模块执行自动化单元测试，由 `web/package.json` 中的 `npm test` 脚本驱动；避免 Node ESM 无法解析省略扩展名的 TS 模块；
 2. **静态类型安全**：通过 `npm run typecheck`（`tsc --noEmit`）验证；
 3. **真实后端数据契约回归**：通过 Python `pytest tests/test_text_flow.py tests/test_scoring.py` 验证真实落库 payload 与前端接口一致性；
 4. **DOM 视觉排版与 ECharts Canvas 渲染**：由 §9.2 的 30 秒人工验收路径覆盖，不夸大宣称 DOM 自动化能力。
 
-#### 自动化测试执行命令（统一确定命令，不设二选一）：
-- **纯函数单元测试**：`npm test`（对应 `web/package.json` 中的执行定义严格为 `node --experimental-strip-types --test web/tests/report.test.ts`）
+#### 自动化测试执行命令（统一确定命令，从 `web/` 目录执行）：
+- **纯函数单元测试**：`npm test`（对应 `web/package.json` 中的执行定义严格为 `node --experimental-strip-types --test tests/report.test.ts`）
 - **类型检查**：`npm run typecheck`（对应 `web/package.json` 中的执行定义严格为 `tsc --noEmit`）
 - **后端契约集成**：`pytest tests/test_text_flow.py tests/test_scoring.py`
 
@@ -452,7 +499,7 @@ export function transformDimensionsToRadar(
 | **R-T02** | 文本模式流畅度为 null 转换 | 输入 `expression_fluency.score = null`，断言 `canRenderRadar === true`，indicator 轴数严格为 3（剔除流畅度轴），values 不包含 0 |
 | **R-T03** | 缺失 ≥2 维时的优雅降级 | 输入有效分数 < 3 个，断言 `canRenderRadar === false`，`radarOptions === null`，`validCount < 3` 触发线性降级标记 |
 | **R-T04** | 全部维度为 null 极端数据 | 输入 4 维分数全为 null，断言 `canRenderRadar === false`，`validCount === 0`，不抛出异常 |
-| **R-T05** | 证据原文字面值无损保留 | 验证带首尾空格、特殊标点与符号的原文字符串经数据传递原样保留，字面值完全一致 |
+| **R-T05** | 证据原文字面值无损保留与解析 | 使用包含首尾空格、特殊标点与符号的 evidence mock 载荷调用 `parseReportResponse()`，断言解析出的 `dimensions.professional_match.evidence` 与输入字面值严格完全相同，绝不截断或破坏空格 |
 
 ### 9.2 30 秒人工验收路径 (评审演练)
 1. **0–5 秒（主视觉第一印象）**：
