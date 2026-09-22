@@ -15,7 +15,9 @@ from server.services.scoring import SingleDimensionScore, SingleScoringResult, S
 
 
 @pytest.fixture(autouse=True)
-def setup_test_db():
+def setup_test_db(monkeypatch):
+    # 文本编排用例不依赖真实 TTS；关闭以避免 edge-tts 可用时 audio_url 非 null 破坏契约断言
+    monkeypatch.setattr(settings, "tts_enabled", False)
     # 使用测试独立数据库或重置表
     from server.db import engine
     Base.metadata.create_all(engine)

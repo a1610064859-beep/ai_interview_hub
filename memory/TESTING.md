@@ -157,12 +157,12 @@
 - pip 解析结果：卸载 `edge-tts-6.1.19`，安装 `edge-tts-7.2.8` 及唯一新增子依赖 `tabulate-0.10.0`，无其他冲突
 
 ### 2. 真实执行与 ffprobe 校验
-- 执行调用：`Communicate("你好", voice="zh-CN-XiaoxiaoNeural").save("hello.mp3")`
-- 文件检查：生成 MP3 存在且非空（7200 字节）
-- ffprobe 验证输出：
-  - `codec_name=mp3`
-  - `format_name=mp3`
-  - `duration=1.200000`
+- 执行调用：`Communicate("你好", voice="zh-CN-XiaoxiaoNeural").save(...)`（pytest `test_edge_tts_v7_real_synthesis_and_ffprobe`）
+- **复测（2026-09-22 18:07，worktree `E:\ai_interview_hub_t4` @ `fd9ca53`）**：
+  - `edge_tts.__version__ == 7.2.8`；voice=`zh-CN-XiaoxiaoNeural`
+  - 短句「你好」pytest：**PASSED**（`REAL_TTS_EXIT=0`，约 3.9s）
+  - 复述句「你好，智驾测试过渡语验证。」：`mp3_bytes=19152`；ffprobe `format_name=mp3`，`codec_name=mp3`，`sample_rate=24000`，`channels=1`，`duration=3.192000`
+- 首轮记录：短句「你好」约 7200 字节，`duration=1.200000`（与句长一致，链路可用）
 
 ### 3. 会话预取与静态服务验证
 - 服务端创建会话：`POST /api/sessions`（job_id=1）返回 HTTP 200，sid=1
@@ -175,6 +175,7 @@
 - 降级验证：模拟网络异常时，会话创建不阻塞，`audio_url` 平稳降级为 `None`
 
 ### 4. 自动化测试回归
-- `tests/test_tts.py`：9 passed，全绿通过（包含新增真实合成与 ffprobe 结构测试）
-- 全量 pytest：70 项测试全数通过（69 passed, 1 skipped [真实 ASR 门控]）
-- 临时文件清理：无任何 `.mp3` 残留，工作区干净
+- `tests/test_tts.py`：9 passed（含 `test_edge_tts_v7_real_synthesis_and_ffprobe`）
+- 全量 pytest：69 passed, 1 skipped；`git diff --check` 通过
+- 附带修复：`TTS_ENABLED=false` 时预取/URL 复用一律返回 `None`，避免磁盘残留 MP3 污染文本编排断言；`test_text_flow` autouse 关闭 TTS
+- 临时验证产物未入库；工作区仅允许任务文件变更

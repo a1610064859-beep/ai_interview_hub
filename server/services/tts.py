@@ -59,7 +59,11 @@ async def synthesize_to_file(text: str, output_path: Path) -> bool:
 
 
 def get_audio_url_if_exists(filename: str) -> str | None:
-    """检查指定音频文件是否存在且有效，返回相对 URL；不存在返回 None"""
+    """检查指定音频文件是否存在且有效，返回相对 URL；不存在返回 None。
+    TTS 关闭时一律返回 None，避免残留文件被文本/降级路径误复用。
+    """
+    if not settings.tts_enabled:
+        return None
     file_path = Path(settings.tts_output_dir) / filename
     if file_path.is_file() and file_path.stat().st_size > 0:
         return f"/audio/{filename}"
@@ -74,6 +78,8 @@ async def prefetch_session_questions(session_id: int, questions: list) -> dict[i
     results: dict[int, str | None] = {}
 
     async def _synth_single(seq: int, text: str) -> tuple[int, str | None]:
+        if not settings.tts_enabled:
+            return seq, None
         filename = f"session_{session_id}_q{seq}.mp3"
         file_path = audio_dir / filename
 
@@ -116,6 +122,8 @@ async def prefetch_session_transitions(session_id: int) -> list[str | None]:
         return []
 
     async def _synth_transition(idx: int, text: str) -> tuple[int, str | None]:
+        if not settings.tts_enabled:
+            return idx, None
         filename = f"session_{session_id}_trans_{idx}.mp3"
         file_path = audio_dir / filename
 
