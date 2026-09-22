@@ -19,6 +19,24 @@ class ASRUnavailableError(Exception):
     """ASR 基础设施不可用 → 503 ASR_UNAVAILABLE"""
 
 
+# CJK 统一汉字：仅折叠两端均为该集合时的空白；英文/数字侧空格保留。
+_CJK_CHAR_CLASS = r"\u4e00-\u9fff"
+_CJK_INTER_SPACE = re.compile(
+    rf"(?<=[{_CJK_CHAR_CLASS}])[ \t\r\n\u3000]+(?=[{_CJK_CHAR_CLASS}])"
+)
+
+
+def normalize_asr_text(text: str) -> str:
+    """折叠 FunASR 常见的汉字间空白，保留英文词、数字及非 CJK–CJK 间隔。
+
+    只处理 CJK（\\u4e00-\\u9fff）字符之间的一个或多个空白（含空格/制表/换行/全角空格）；
+    不修改 validate_evidence，不在此函数处理文本答题路径。
+    """
+    if not text:
+        return text
+    return _CJK_INTER_SPACE.sub("", text)
+
+
 def count_filler_words(text: str) -> int:
     """统计填充词（嗯|那个|就是|然后|这个）频次"""
     pattern = r"(嗯|那个|就是|然后|这个)"
@@ -80,7 +98,7 @@ async def transcribe_wav(wav_path: str) -> str:
         return str(result[0].get("text", "") or "")
 
     try:
-        return await asyncio.wait_for(
+        raw = await asyncio.wait_for(
             asyncio.to_thread(_infer), timeout=settings.asr_timeout_s
         )
     except asyncio.TimeoutError as exc:
@@ -89,3 +107,5 @@ async def transcribe_wav(wav_path: str) -> str:
         raise
     except Exception as exc:
         raise ASRUnavailableError(f"ASR 转写失败: {exc}") from exc
+    # 落库前规范化：wpm/filler 与评分 evidence 共用同一文本
+    return normalize_asr_text(raw)

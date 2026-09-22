@@ -24,7 +24,7 @@ from server.services import asr as asr_module
 from server.services import audio as audio_module
 from server.services import orchestrator
 from server.services import scoring as scoring_module
-from server.services.asr import ASRUnavailableError
+from server.services.asr import ASRUnavailableError, normalize_asr_text
 
 
 @pytest.fixture(autouse=True)
@@ -92,9 +92,40 @@ def _fake_pipeline(monkeypatch, transcribe_text="那个 就是 我们 用 CANoe 
             raise transcribe_side_effect
     else:
         async def _fake_transcribe(wav_path):
-            return transcribe_text
+            # 与生产 transcribe_wav 一致：返回前做 CJK 间空白折叠
+            return normalize_asr_text(transcribe_text)
     monkeypatch.setattr(asr_module, "transcribe_wav", _fake_transcribe)
     monkeypatch.setattr(orchestrator, "evaluate_followup", AsyncMock(return_value=None))
+
+
+def test_normalize_asr_text_cjk_and_latin_mixed():
+    """T5-FIX：仅折叠 CJK–CJK 之间空白，保留英文/数字侧空格。"""
+    assert normalize_asr_text("超 声 波 雷 达") == "超声波雷达"
+    assert normalize_asr_text("使 用 CANoe 进 行 总 线 测 试") == "使用 CANoe 进行总线测试"
+    assert normalize_asr_text("CANoe bus test") == "CANoe bus test"
+    assert normalize_asr_text("ISO 26262 功 能 安 全") == "ISO 26262 功能安全"
+    assert normalize_asr_text("超\n\n声   波") == "超声波"
+    assert normalize_asr_text("") == ""
+    assert normalize_asr_text("已经连续中文无空格") == "已经连续中文无空格"
+
+
+def test_audio_answer_persists_normalized_asr_text(monkeypatch, valid_webm_bytes):
+    """规范化发生在落库前；wpm/filler 基于同一规范化文本。"""
+    spaced = "使 用 CANoe 进 行 总 线 测 试"
+    _fake_pipeline(monkeypatch, transcribe_text=spaced)
+    client = TestClient(app)
+    sid = _create_session(client)
+    resp = _post_audio(client, sid, valid_webm_bytes)
+    assert resp.status_code == 200, resp.text
+
+    expected = "使用 CANoe 进行总线测试"
+    with SessionLocal() as db:
+        ans = db.query(Answer).filter(Answer.session_id == sid).one()
+        assert ans.answer_text == expected
+        # "".join(expected.split()) 字数与去全部空白一致 → wpm 稳定
+        char_n = len("".join(expected.split()))
+        assert ans.wpm == round(char_n / 8.0 * 60, 1)
+        assert ans.filler_cnt == 0
 
 
 def _post_audio(client, sid, audio_bytes, duration_s="8.0", pause_cnt="2", filename="answer.webm"):
@@ -129,9 +160,10 @@ def test_audio_answer_next_with_acoustic_values(monkeypatch, valid_webm_bytes):
         ans = answers[0]
         assert ans.duration_s == 8.0
         assert ans.pause_cnt == 2
-        # "那个 就是 我们 用 CANoe 做 测试" 去空白 15 字 → round(15/8*60,1)=112.5
+        # 规范化后："那个就是我们用 CANoe 做测试"；去全部空白仍 15 字 → wpm=112.5
         assert ans.wpm == 112.5
         assert ans.filler_cnt == 2  # 那个 + 就是
+        assert ans.answer_text == "那个就是我们用 CANoe 做测试"
         assert "CANoe" in ans.answer_text
         sess = db.query(Session).filter(Session.id == sid).first()
         assert sess.status == "active"
@@ -350,6 +382,12 @@ def test_real_model_transcribe_chinese(monkeypatch):
         assert ans is not None
         assert ans.answer_text.strip() != ""
         assert re.search(r"[\u4e00-\u9fff]", ans.answer_text), f"转写非中文: {ans.answer_text!r}"
+        # T5-FIX：落库文本不得再含 CJK–CJK 间空白（已在 transcribe_wav 内规范化）
+        assert ans.answer_text == normalize_asr_text(ans.answer_text)
+        assert not re.search(
+            r"[\u4e00-\u9fff][ \t\r\n\u3000]+[\u4e00-\u9fff]",
+            ans.answer_text,
+        ), f"仍含汉字间空格: {ans.answer_text!r}"
 
 
 def test_oversize_rejected_before_probe_lease_and_asr(monkeypatch, valid_webm_bytes):

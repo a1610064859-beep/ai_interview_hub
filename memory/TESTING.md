@@ -255,7 +255,6 @@
   - `ACCEPT_EXIT=0`；端口 `:18091` / `:34730` / `:9235` → CLEAN
 - 长评分断连恢复机制在合入后的 main 上已再验证；真人最终题全链路可作为 M2 关闭后的联调抽检项保留。
 
-
 ## T7-G1-BE 成长追踪后端
 
 范围：学生身份归属、input_mode/scoring_version 列、成长只读 API、种子学生 3/4；不写 v1（待 ASR 规范化验收）。
@@ -269,3 +268,34 @@
 | 首答原子写 input_mode；混用 409 | 文本/语音端点 |
 | scoring_version 新报告保持 NULL | P8；测试用 fixture |
 | sid=5 | 不改写 |
+
+## [T5-FIX] FunASR 中文字间空格规范化与评分证据恢复
+
+范围：仅 `server/services/asr.py` 增加 `normalize_asr_text`，在 `transcribe_wav` 返回前折叠 CJK–CJK 空白；不改 `validate_evidence`、不放宽 25 字、不动 sid=5、不写 `SCORING_VERSION`。文本答题不经过本函数。
+
+分支 / worktree：`feature/T5-asr-cjk-normalize` @ `E:\ai_interview_hub_asr_normalize`，基线 `main`=`2c9cc24`。
+
+### 归一化规则
+
+- 仅当空白两端均为 CJK 统一汉字（`\\u4e00-\\u9fff`）时删除该空白（含空格/制表/换行/全角空格）。
+- 保留：英文词间、数字间、英文与英文、以及非 CJK–CJK 两端的空格（如 `使用 CANoe`、`ISO 26262 功能安全`）。
+
+### 证据匹配（夹具，不改 sid=5）
+
+| 场景 | 结果 |
+| --- | --- |
+| 规范化前：`超声波雷达` ∈ 带汉字间空格原文 | **失败**（复现冲突面） |
+| 规范化后：同 evidence + 严格 `validate_evidence` | **通过** |
+| 超长 / 虚构 / 首尾空格 | 仍失败（规则未放宽） |
+
+### 自动化
+
+| 项 | 结果 |
+| --- | --- |
+| `normalize_asr_text` 用例（CJK / CANoe / ISO / 换行 / 空串） | 通过 |
+| 语音落库为规范化文本 + wpm/filler 同源 | 通过 |
+| `tests/test_scoring.py` evidence 严格性回归 | 通过 |
+| 定向 `test_audio_flow` + `test_scoring` | 33 passed, 1 skipped |
+| 全量 pytest | 72 passed, 2 skipped |
+| `ASR_ACCEPTANCE_REAL=1` 真实 FunASR | 通过：落库文本无 CJK–CJK 间空格 |
+| sid=5 | **未改写、未重跑**（保留缺陷样本） |
