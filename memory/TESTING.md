@@ -254,3 +254,29 @@
   - POST×1（代理式 500）→ 报告 `404→404→200` → 自动进入 `http://127.0.0.1:34730/reports/5`
   - `ACCEPT_EXIT=0`；端口 `:18091` / `:34730` / `:9235` → CLEAN
 - 长评分断连恢复机制在合入后的 main 上已再验证；真人最终题全链路可作为 M2 关闭后的联调抽检项保留。
+
+## T7-G1-FE 学生档案选择与成长追踪前端
+
+范围：`web/lib/growth-data.ts` 校验与折线转换；首页 real 模式学生/mode 选择与创建会话三字段；`/growth` 历史与趋势；报告页成长入口携带 `user_id`/`job_id`。不改 server、不改依赖。
+
+### 自动化
+
+| 项 | 状态 |
+| --- | --- |
+| growth-data 纯函数（请求体三项、双学生隔离、0/1/3 历史、null 不补零、connectNulls=false、不可比 reasons、报告链接、非法抛错） | 见 `npm test` |
+| `npm test` | 通过，退出码 0（52 pass） |
+| `npm run typecheck` | 通过，退出码 0 |
+| `npm run build` | 通过，退出码 0 |
+| `git diff --check` | 通过 |
+
+### 浏览器验收（mock/stub）
+
+- stub `:18092` + Next `:34731`（real rewrite）。
+- 首页/成长页 HTTP 200；`POST /api/sessions` 三字段 body → 200；仅 `job_id` → 422。
+- 学生4历史 `records:[]`（0 条空态数据源）。
+- 报告页成长链接为 CSR（加载报告后渲染）；`buildGrowthHref`/`buildReportHref` 由单元测试覆盖。
+- 验收后 `:18092` / `:34731` 已清理无监听。
+
+### 合入约束
+
+- 禁止直接合 main；经 Astra 审查后进入 `feature/T7-growth-integration`。
