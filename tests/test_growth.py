@@ -644,3 +644,136 @@ def test_seed_students_idempotent_and_conflict():
             import_seeds(db=db)
         db.refresh(u3)
         assert u3.name_masked == "冲突*名"
+
+
+def test_integration_stub_matrix_and_p8_closed():
+    """T7-G1-INTEGRATION 联调 stub：契约形状 + 隔离矩阵 + P8 仍关闭。
+
+    覆盖：两学生/两岗位、0/1/3 次、跨学生/跨岗位隔离、text/voice/legacy 不可比、
+    创建三字段、双向 INPUT_MODE_MISMATCH；不启用 SCORING_VERSION=v1。
+    """
+    from server.services.scoring import SCORING_VERSION
+
+    assert SCORING_VERSION is None
+
+    client = TestClient(app)
+    assert client.post("/api/sessions", json={"job_id": 1}).status_code == 422
+    created = client.post(
+        "/api/sessions",
+        json={"job_id": 1, "user_id": 3, "mode": "毕业生"},
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert set(body.keys()) >= {"sid", "question", "transition_audio_urls"}
+    assert body["question"]["seq"] == 1
+
+    students = client.get("/api/students").json()["students"]
+    assert [s["id"] for s in students] == [3, 4]
+
+    base = datetime(2026, 9, 21, 9, 0, 0)
+    # 学生3 岗位1：三次 text 可比
+    s1, _ = _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base,
+        dimensions=_dims(70.0, 70.0, None, 70.0),
+        scoring_version="fixture-a",
+    )
+    s2, _ = _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base + timedelta(hours=1),
+        dimensions=_dims(72.0, 72.0, None, 72.0),
+        scoring_version="fixture-a",
+    )
+    s3, _ = _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base + timedelta(hours=2),
+        dimensions=_dims(74.0, 74.0, None, 74.0),
+        scoring_version="fixture-a",
+    )
+    # 学生4 同岗位；学生3 另一岗位
+    s4, _ = _insert_completed(
+        user_id=4,
+        job_id=1,
+        started_at=base + timedelta(hours=3),
+        dimensions=_dims(80.0, 80.0, None, 80.0),
+        scoring_version="fixture-a",
+    )
+    _insert_completed(
+        user_id=3,
+        job_id=2,
+        started_at=base + timedelta(hours=4),
+        dimensions=_dims(60.0, 60.0, None, 60.0),
+        scoring_version="fixture-a",
+    )
+
+    hist3 = client.get("/api/growth/3/history", params={"job_id": 1}).json()
+    assert [r["session_id"] for r in hist3["records"]] == [s1, s2, s3]
+    assert s4 not in [r["session_id"] for r in hist3["records"]]
+
+    hist4 = client.get("/api/growth/4/history", params={"job_id": 1}).json()
+    assert [r["session_id"] for r in hist4["records"]] == [s4]
+
+    hist_job2 = client.get("/api/growth/3/history", params={"job_id": 2}).json()
+    assert len(hist_job2["records"]) == 1
+    assert hist_job2["records"][0]["session_id"] != s1
+
+    trend3 = client.get("/api/growth/3/trend", params={"job_id": 1}).json()
+    assert trend3["sessions_count"] == 3
+    assert trend3["overall_comparison"]["comparable"] is True
+
+    zero = client.get("/api/growth/4/trend", params={"job_id": 2}).json()
+    assert zero["sessions_count"] == 0
+    assert zero["overall_comparison"]["reasons"] == ["NO_RECORDS"]
+
+    single = client.get("/api/growth/4/trend", params={"job_id": 1}).json()
+    assert single["sessions_count"] == 1
+    assert single["overall_comparison"]["reasons"] == ["SINGLE_RECORD"]
+
+    with SessionLocal() as db:
+        db.query(Report).delete()
+        db.query(Session).delete()
+        db.commit()
+
+    _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base,
+        dimensions=_dims(70.0, 70.0, None, 70.0),
+        input_mode="text",
+        scoring_version="fixture-a",
+    )
+    _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base + timedelta(hours=1),
+        dimensions=_dims(75.0, 75.0, 80.0, 75.0),
+        input_mode="voice",
+        scoring_version="fixture-a",
+    )
+    mixed = client.get("/api/growth/3/trend", params={"job_id": 1}).json()
+    assert "INPUT_MODE_MISMATCH" in mixed["overall_comparison"]["reasons"]
+
+    with SessionLocal() as db:
+        db.query(Report).delete()
+        db.query(Session).delete()
+        db.commit()
+
+    _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base,
+        dimensions=_dims(),
+        scoring_version=None,
+    )
+    _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base + timedelta(hours=1),
+        dimensions=_dims(72.0, 72.0, None, 72.0),
+        scoring_version="fixture-a",
+    )
+    legacy = client.get("/api/growth/3/trend", params={"job_id": 1}).json()
+    assert "SCORING_VERSION_UNKNOWN" in legacy["overall_comparison"]["reasons"]

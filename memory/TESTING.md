@@ -347,3 +347,32 @@
 | `git diff --check` | 见提交前 |
 
 不合入 main / integration；交 Astra 复审。
+
+## T7-G1-INTEGRATION 成长追踪集成分支联调
+
+范围：自 `main@6f2facb`（含 ASR CJK `ca9a75e`/`6f2facb`）建 `feature/T7-growth-integration`；`--no-ff` 先后合入 BE `f185b97`、FE `5fac0f6`；只解冲突、不重构；P8 保持 `SCORING_VERSION=None`；禁止合入 main。
+
+### 合并
+
+| 步骤 | 提交 |
+| --- | --- |
+| merge BE | `5a24ccc`（`6f2facb` + `f185b97`） |
+| merge FE | `c1b395d`（`5a24ccc` + `5fac0f6`） |
+| 冲突 | 仅 `memory/TESTING.md`（双方均改）；保留 BE 节 + FE 节，无生产代码冲突 |
+
+### 联调 stub
+
+- `tests/test_growth.py::test_integration_stub_matrix_and_p8_closed`
+- 覆盖：两学生两岗位、0/1/3 次、跨学生/跨岗位隔离、text/voice/legacy 不可比、创建三字段、P8 仍关闭
+
+### 门禁（integration worktree）
+
+| 检查 | 退出码 |
+| --- | --- |
+| 全量 pytest | 0（85 passed, 2 skipped） |
+| `web/npm test` | 0（59 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build` | 0 |
+| `git diff --check` / `main...HEAD` | 0 |
+
+不合入 main；交 Astra / 队长审查后另票合 main。
