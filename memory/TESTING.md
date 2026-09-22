@@ -99,3 +99,32 @@
 
 - 注入语音 looping 使转写文本失真（"hello 啦 啦 ty 啥"类音节），内容维度分（2.5/5.0/4.0）不具参考性；声学维度与链路行为是本轮验收对象。
 - 真人手持麦克风的完整 6 题语音流程（含自然语音内容分）仍属 H/J 人工验收项。
+
+### J 人工 curl 证据（2026-09-22，补录）
+
+说明：本段为并行验收线产出的 **人工 curl J 证据**，仅补录至本文件；**不覆盖**上文「T6 真实浏览器语音闭环验收（第二轮）」记录。样本为真实中文 WebM（SAPI 中文合成 wav → ffmpeg opus），未将音频/json 合入本分支。
+
+前置：`TTS_ENABLED=false`，`ASR_ENABLED=true`，uvicorn `127.0.0.1:18080`；样本约 59632 bytes / 10.3s。
+
+1. 创建会话
+   - `POST /api/sessions` body `{"job_id":1}` → **HTTP 200**，**sid=1**，`question.seq=1`，`audio_url=null`
+
+2. 主答（真实中文 WebM）
+   - `POST /api/sessions/1/answers` multipart：`audio`=中文 webm，`duration_s=10.3`，`pause_cnt=1`
+   - **HTTP 200**（约 26.3s，含首次 FunASR 加载）
+   - 响应：`type=followup`，`question.seq=1`，`transition_audio_url=null`
+
+3. 追问（同样本）
+   - 同上，`pause_cnt=0` → **HTTP 200**（约 0.63s）
+   - 响应：`type=next`，`question.seq=2`，`transition_audio_url=null`
+   - 推进：**followup → next**
+
+4. DB `answers` 声学落库
+
+| id | q_seq | is_followup | duration_s | wpm | pause_cnt | filler_cnt |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 0 | 10.3 | 209.7 | 1 | 0 |
+| 2 | 1 | 1 | 10.3 | 209.7 | 0 | 0 |
+
+5. 本轮 J 未跑至 `done`，无流畅度终评；全场报告仍以上文浏览器第二轮为准。
+6. FastAPI 端口清理：验收后 `taskkill` 结束 uvicorn；复查 `18080/34723/34722/9231` 均为 **NO_LISTENER**。
