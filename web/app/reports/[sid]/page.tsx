@@ -7,8 +7,11 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DIMENSION_LABEL_MAP,
   REQUIRED_DIMENSIONS,
+  isTextModeReport,
   overallGrade,
   parseReportResponse,
+  radarDegradeBadge,
+  reportModeHint,
   transformDimensionsToRadar,
   type DimensionKey,
   type ReportData,
@@ -252,10 +255,9 @@ function ReportView({ report }: { report: ReportData }) {
 
   const overallText = report.overall === null ? "--" : report.overall.toFixed(1);
   const ringPct = report.overall === null ? 0 : Math.max(0, Math.min(100, report.overall));
-  const modeHint =
-    report.dimensions.expression_fluency.score === null
-      ? "文本模式 · 表达流畅度未评估"
-      : "能力评估报告";
+  const isTextMode = isTextModeReport(report.dimensions);
+  const modeHint = reportModeHint(isTextMode);
+  const degradeBadge = radarDegradeBadge(radar.validCount, isTextMode);
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -305,9 +307,9 @@ function ReportView({ report }: { report: ReportData }) {
         <div className="cabin-panel cabin-glow p-6 lg:col-span-6">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-lg text-slate-50">多维能力雷达舱</h2>
-            {radar.validCount === 3 ? (
+            {degradeBadge ? (
               <span className="rounded-full border border-orange-400/40 px-2 py-1 text-xs text-orange-300">
-                模式降级: 文本模式仅绘制 3 项有效维度
+                {degradeBadge}
               </span>
             ) : null}
           </div>
@@ -321,7 +323,12 @@ function ReportView({ report }: { report: ReportData }) {
 
       <section className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
         {REQUIRED_DIMENSIONS.map((key) => (
-          <DimensionCard key={key} dimKey={key} data={report.dimensions[key]} />
+          <DimensionCard
+            key={key}
+            dimKey={key}
+            data={report.dimensions[key]}
+            isTextMode={isTextMode}
+          />
         ))}
       </section>
 
@@ -415,9 +422,11 @@ function LinearGauges({ report }: { report: ReportData }) {
 function DimensionCard({
   dimKey,
   data,
+  isTextMode,
 }: {
   dimKey: DimensionKey;
   data: ReportData["dimensions"][DimensionKey];
+  isTextMode: boolean;
 }) {
   const scored = typeof data.score === "number";
   return (
@@ -447,7 +456,7 @@ function DimensionCard({
         <p className="mt-4 text-sm text-slate-500">本维度无直接字面引用</p>
       )}
       <p className="mt-3 text-sm leading-6 text-slate-400">{data.reason}</p>
-      {dimKey === "expression_fluency" && data.score === null ? (
+      {dimKey === "expression_fluency" && isTextMode ? (
         <p className="mt-3 text-xs text-slate-500">
           语音闭环版本（M2）将接入语速、停顿与填充词声学量化分析
         </p>

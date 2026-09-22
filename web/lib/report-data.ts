@@ -245,3 +245,31 @@ export function overallGrade(overall: number | null): string {
   if (overall >= 60) return "及格";
   return "待提升";
 }
+
+/** 后端文本模式流畅度缺失时的固定 reason 文案。 */
+export const TEXT_MODE_FLUENCY_REASON = "文本模式，未评估语音流畅度";
+
+/**
+ * 仅当表达流畅度为空且 reason 明确声明文本模式时，才判定为文本面试报告。
+ * 语音报告因声学数据缺失导致流畅度为 null 时不得误判。
+ */
+export function isTextModeReport(dimensions: ReportData["dimensions"]): boolean {
+  const fluency = dimensions.expression_fluency;
+  return fluency.score === null && fluency.reason === TEXT_MODE_FLUENCY_REASON;
+}
+
+/**
+ * 三维雷达降级徽标：文本模式用专用文案，其他维度缺失用中性说明。
+ */
+export function radarDegradeBadge(
+  validCount: number,
+  isTextMode: boolean,
+): string | null {
+  if (validCount !== 3) return null;
+  if (isTextMode) return "模式降级: 文本模式仅绘制 3 项有效维度";
+  return "模式降级: 1 项维度未评估";
+}
+
+export function reportModeHint(isTextMode: boolean): string {
+  return isTextMode ? "文本模式 · 表达流畅度未评估" : "能力评估报告";
+}

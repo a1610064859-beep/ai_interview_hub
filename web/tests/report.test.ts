@@ -4,6 +4,10 @@ import { describe, it } from "node:test";
 import {
   parseReportResponse,
   transformDimensionsToRadar,
+  isTextModeReport,
+  radarDegradeBadge,
+  reportModeHint,
+  TEXT_MODE_FLUENCY_REASON,
   type DimensionData,
   type ReportData,
 } from "../lib/report-data.ts";
@@ -151,5 +155,41 @@ describe("parseReportResponse", () => {
         }),
       ),
     );
+  });
+});
+
+describe("isTextModeReport / radarDegradeBadge", () => {
+  it("R-T08: 仅文本模式 reason 才判定为文本模式；三维徽标区分文案", () => {
+    const textDims = baseDimensions({
+      expression_fluency: {
+        score: null,
+        evidence: null,
+        reason: TEXT_MODE_FLUENCY_REASON,
+      },
+    });
+    assert.equal(isTextModeReport(textDims), true);
+    assert.equal(reportModeHint(true), "文本模式 · 表达流畅度未评估");
+    assert.equal(
+      radarDegradeBadge(3, true),
+      "模式降级: 文本模式仅绘制 3 项有效维度",
+    );
+
+    const voiceMissingFluency = baseDimensions({
+      expression_fluency: {
+        score: null,
+        evidence: null,
+        reason: "声学特征不足，未能评估表达流畅度",
+      },
+    });
+    assert.equal(isTextModeReport(voiceMissingFluency), false);
+    assert.equal(reportModeHint(false), "能力评估报告");
+    assert.equal(radarDegradeBadge(3, false), "模式降级: 1 项维度未评估");
+
+    const missingProfessional = baseDimensions({
+      professional_match: { score: null, evidence: null, reason: "校验未通过" },
+    });
+    assert.equal(isTextModeReport(missingProfessional), false);
+    assert.equal(radarDegradeBadge(3, false), "模式降级: 1 项维度未评估");
+    assert.equal(radarDegradeBadge(4, false), null);
   });
 });
