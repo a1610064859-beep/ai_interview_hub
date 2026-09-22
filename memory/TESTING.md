@@ -128,3 +128,21 @@
 
 5. 本轮 J 未跑至 `done`，无流畅度终评；全场报告仍以上文浏览器第二轮为准。
 6. FastAPI 端口清理：验收后 `taskkill` 结束 uvicorn；复查 `18080/34723/34722/9231` 均为 **NO_LISTENER**。
+
+### H 严格断网与本地缓存转写验收证据（2026-09-22）
+
+说明：依据 `docs/asr-implementation-spec.md` §7-H，实施严格断网隔离（拦截所有非 loopback socket 连接，抛出 `OSError(10051, Network is unreachable)`），并设置 `MODELSCOPE_OFFLINE=1`、`HF_HUB_OFFLINE=1`，验证冷启动加载本地缓存模型并完成真实中文 WebM 转写。
+
+1. **环境与隔离手段**：
+   - 环境变量：`MODELSCOPE_OFFLINE=1`，`HF_HUB_OFFLINE=1`，`ASR_MODEL_CACHE_DIR=E:\ai_models\funasr`
+   - Socket 拦截：对 `8.8.8.8:53` 外呼连接主动抛出 `[Errno 10051] [H断网拦截] 网络不可达`
+2. **输入样本**：
+   - 真实中文语音（Windows SAPI Huihui，16kHz mono），内容：“我们使用CANoe进行智能汽车总线通信测试和故障注入”
+   - ffmpeg 转码为真实 WebM/Opus 容器样本（23833 字节）
+3. **执行链路与判定**：
+   - **ffprobe** 真实容器探测：通过（Opus, 1 channel, 16000 Hz）
+   - **ffmpeg** 转码为 16k mono wav：通过（195598 字节）
+   - **FunASR AutoModel** 冷加载：完全读取本地缓存 `E:\ai_models\funasr\models\iic--speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch\snapshots\master\model.pt`（status: `<All keys matched successfully>`）
+   - **转写结果**：`'我 们 使 用 canoe 进 行 智 能 汽 车 总 线 通 信 测 试 和 故 障 注 入'`
+   - **首加载+转写耗时**：24.37 秒，RTF=0.242
+   - **结论**：**H 严格断网验收通过**，无任何外网依赖，模型完全依赖本地缓存离线运行。
