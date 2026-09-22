@@ -98,7 +98,7 @@ export default function HomePage() {
     if (result.kind === "http") {
       createLock.current = false;
       setBusy(false);
-      setNotice(`创建会话失败（HTTP ${result.status}）。未进入面试，未自动重试。`);
+      setNotice(formatApiError(result, "创建会话失败", "未进入面试，未自动重试。"));
       return;
     }
     if (result.kind === "invalid") {
@@ -290,6 +290,41 @@ function mockQuestion(): Question {
   };
 }
 
+type ApiErrorInfo = {
+  status: number;
+  code: string | null;
+  serverMessage: string | null;
+};
+
+function formatApiError(info: ApiErrorInfo, action: string, tail: string): string {
+  const codeText = info.code ? `，${info.code}` : "";
+  const messageText = info.serverMessage ? `：${info.serverMessage}` : "";
+  return `${action}（HTTP ${info.status}${codeText}）${messageText}。${tail}`;
+}
+
+async function readApiError(response: Response): Promise<ApiErrorInfo> {
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { status: response.status, code: null, serverMessage: null };
+  }
+  if (!isRecord(payload) || !isRecord(payload.detail)) {
+    return { status: response.status, code: null, serverMessage: null };
+  }
+  const code = nonEmptyString(payload.detail.code);
+  const serverMessage = nonEmptyString(payload.detail.message);
+  return { status: response.status, code, serverMessage };
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 async function loadRealJobList(): Promise<ParseOk<Job[]> | ParseErr> {
   let response: Response;
   try {
@@ -302,9 +337,10 @@ async function loadRealJobList(): Promise<ParseOk<Job[]> | ParseErr> {
     return { ok: false, message: "网络失败，未能获取岗位列表。未改用演示数据。" };
   }
   if (!response.ok) {
+    const info = await readApiError(response);
     return {
       ok: false,
-      message: `岗位列表请求失败（HTTP ${response.status}）。未改用演示数据。`,
+      message: formatApiError(info, "岗位列表请求失败", "未改用演示数据。"),
     };
   }
   let payload: unknown;
@@ -318,7 +354,7 @@ async function loadRealJobList(): Promise<ParseOk<Job[]> | ParseErr> {
 
 type RealSessionResult =
   | { kind: "network" }
-  | { kind: "http"; status: number }
+  | { kind: "http"; status: number; code: string | null; serverMessage: string | null }
   | { kind: "invalid"; message: string }
   | { kind: "ok"; sid: number; question: Question };
 
@@ -338,7 +374,8 @@ async function requestRealSession(jobId: number): Promise<RealSessionResult> {
     return { kind: "network" };
   }
   if (!response.ok) {
-    return { kind: "http", status: response.status };
+    const info = await readApiError(response);
+    return { kind: "http", ...info };
   }
   let payload: unknown;
   try {
