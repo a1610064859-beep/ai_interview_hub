@@ -157,6 +157,39 @@ def test_evidence_validation_exact_string_spaces():
     assert validate_evidence("CANoe", answers) is True
 
 
+def test_evidence_match_after_cjk_normalize_without_relaxing_validate():
+    """T5-FIX：CJK 间隔折叠后，连续中文 evidence 可通过现有严格 validate_evidence；规则本身未放宽。"""
+    from server.services.asr import normalize_asr_text
+
+    raw_spaced = [
+        "超 声 波 雷 达用于测距，我 们 使 用 CANoe 做 总 线 测 试",
+        "坚 持 功 能 安 全 底 线",
+    ]
+    continuous_evidence = "超声波雷达"
+    canoe_evidence = "使用 CANoe 做总线测试"
+    safety_evidence = "功能安全底线"
+
+    # 规范化前：连续中文不是字面子串 → 失败（复现 sid=5 冲突面）
+    assert validate_evidence(continuous_evidence, raw_spaced) is False
+    assert validate_evidence(safety_evidence, raw_spaced) is False
+
+    normalized = [normalize_asr_text(a) for a in raw_spaced]
+    assert normalized[0] == "超声波雷达用于测距，我们使用 CANoe 做总线测试"
+    assert normalized[1] == "坚持功能安全底线"
+
+    # 规范化后：同函数、同规则可通过
+    assert validate_evidence(continuous_evidence, normalized) is True
+    assert validate_evidence(canoe_evidence, normalized) is True
+    assert validate_evidence(safety_evidence, normalized) is True
+
+    # 严格性未放宽：超长、虚构、首尾空格仍失败
+    too_long = "超声波雷达用于测距，我们使用 CANoe 做总线测试坚持"
+    assert len(too_long) > 25
+    assert validate_evidence(too_long, normalized) is False
+    assert validate_evidence("精通Python并发", normalized) is False
+    assert validate_evidence(" 超声波雷达", normalized) is False
+
+
 @pytest.mark.anyio
 async def test_score_interview_partial_dimensions_preserved():
     """逐维保留有效结果；重试后依然无效的维度置 None，不影响其余有效维度"""
