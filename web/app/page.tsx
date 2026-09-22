@@ -10,6 +10,7 @@ import {
   parseAnswerResponse,
   type SessionCreateData,
   type AnswerData,
+  pickTransitionAudioUrl,
 } from "../lib/recorder";
 
 const TOTAL_QUESTIONS = 6;
@@ -226,6 +227,7 @@ export default function HomePage() {
       question: result.question,
       isFollowup: false,
       startedAtMs: Date.now(),
+      transitionAudioUrls: result.transitionAudioUrls,
       transitionAudioUrl: null,
     });
     setBusy(false);
@@ -233,6 +235,19 @@ export default function HomePage() {
 
   function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function playTransitionAudio(urls: string[], index: number) {
+    const url = pickTransitionAudioUrl(urls, index);
+    if (!url) {
+      return;
+    }
+    try {
+      const audio = new Audio(url);
+      audio.play().catch(() => undefined);
+    } catch {
+      // 浏览器 autoplay 限制或环境不支持静默降级
+    }
   }
 
   async function startRecording() {
@@ -287,6 +302,8 @@ export default function HomePage() {
     }
     recorderRef.current = null;
     setVoiceMeta(`本次录音：时长 ${recording.durationS} 秒 · 停顿 ${recording.pauseCnt} 次`);
+    // 提交回答后立即播放预生成通用过渡语，掩盖 ASR 与大模型 3-5 秒处理时延（AGENTS §6.2）
+    playTransitionAudio(view.transitionAudioUrls, view.question.seq - 1);
     await submitAudioAnswer(view, recording);
   }
 
@@ -370,6 +387,7 @@ export default function HomePage() {
       question: result.value.question,
       isFollowup: result.value.type === "followup",
       startedAtMs: view.startedAtMs,
+      transitionAudioUrls: view.transitionAudioUrls,
       transitionAudioUrl: result.value.transitionAudioUrl,
     });
     setVoiceMeta(null);
@@ -414,6 +432,8 @@ export default function HomePage() {
 
     const seq = view.question.seq;
     const wasFollowup = view.isFollowup;
+    // 提交文本回答后立即播放预生成通用过渡语，掩盖大模型 3-5 秒处理时延（AGENTS §6.2）
+    playTransitionAudio(view.transitionAudioUrls, view.question.seq - 1);
     const result = await requestTextAnswer(view.sid, normalized);
     if (result.kind === "network") {
       setBusy(false);
@@ -479,6 +499,7 @@ export default function HomePage() {
       question: result.value.question,
       isFollowup: result.value.type === "followup",
       startedAtMs: view.startedAtMs,
+      transitionAudioUrls: view.transitionAudioUrls,
       transitionAudioUrl: result.value.transitionAudioUrl,
     });
     setAnswerText("");
@@ -688,20 +709,13 @@ function DeviceCheckPanel({
     }
     const url = URL.createObjectURL(recording.blob);
     playbackUrlRef.current = url;
-    const audio = new Audio(url);
-    audio.onended = () => {
-      setStatus((current) => (current === "playing" ? "confirm" : current));
-    };
-    audio.onerror = () => {
-      setStatus("playback_failed");
-      setMessage("回放失败：未能捕获自检音频。请重试自检。");
-    };
-    setStatus("playing");
+    setStatus("confirm");
+    // 尝试直接播放回放；若被浏览器 autoplay 策略阻止，用户仍可通过「试听录音」按钮触发播放
     try {
-      await audio.play();
+      const audio = new Audio(url);
+      audio.play().catch(() => undefined);
     } catch {
-      setStatus("playback_failed");
-      setMessage("回放失败：浏览器阻止了播放。请重试自检。");
+      // 静默降级
     }
   }
 
@@ -754,7 +768,21 @@ function DeviceCheckPanel({
         ) : null}
         {status === "confirm" ? (
           <>
-            <span className="text-sm text-[#b7c8e2]">能清楚听到自己的声音吗？</span>
+            <span className="text-sm text-[#b7c8e2]">录音已完成。可试听回放或确认进入：</span>
+            <button
+              type="button"
+              className="max-w-full rounded-full border border-[#2f6fed] bg-[#0c1730] px-4 py-2 text-sm text-[#7eb6ff] hover:bg-[#1a2c54]"
+              onClick={() => {
+                if (playbackUrlRef.current) {
+                  const audio = new Audio(playbackUrlRef.current);
+                  audio.play().catch(() => {
+                    setMessage("回放失败：请检查系统音频输出设备后重试。");
+                  });
+                }
+              }}
+            >
+              试听录音
+            </button>
             <button
               type="button"
               className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04]"
@@ -767,7 +795,7 @@ function DeviceCheckPanel({
               className="max-w-full rounded-full border border-[#2f6fed] bg-transparent px-4 py-2 text-sm text-[#7eb6ff]"
               onClick={retry}
             >
-              重试自检
+              重新录制
             </button>
           </>
         ) : null}
@@ -829,6 +857,8 @@ function InterviewPanel({
   onStopSendRecording: () => void;
 }) {
   const trimmedLen = answerText.trim().length;
+  const [isTyping, setIsTyping] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   return (
     <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
@@ -852,9 +882,20 @@ function InterviewPanel({
           <p className="mt-6 text-sm text-[#7eb6ff]">{job.family}</p>
           <h2 className="mt-1 break-anywhere text-2xl text-white">{job.title}</h2>
           {sid !== null ? <p className="mt-2 text-sm text-[#9fb4d4]">会话 {sid}</p> : null}
-          <QuestionSubtitle text={question.text} />
+          <div className="my-2 flex flex-col items-center justify-center">
+            <InterviewerWaveform active={isTyping || isPlayingAudio} />
+          </div>
+          <QuestionSubtitle text={question.text} onTypingChange={setIsTyping} />
           {question.audioUrl !== null ? (
-            <audio className="mt-4 max-w-full" controls src={question.audioUrl} preload="none">
+            <audio
+              className="mt-4 max-w-full"
+              controls
+              src={question.audioUrl}
+              preload="none"
+              onPlay={() => setIsPlayingAudio(true)}
+              onEnded={() => setIsPlayingAudio(false)}
+              onPause={() => setIsPlayingAudio(false)}
+            >
               当前浏览器不支持音频播放。
             </audio>
           ) : null}
@@ -916,14 +957,18 @@ function InterviewPanel({
                   </button>
                 ) : null}
                 {voicePhase === "sending" ? (
-                  <span className="text-sm text-[#7eb6ff]" role="status">
-                    正在上传与识别…（首次可能较久，请勿关闭页面）
-                  </span>
+                  <div
+                    className="flex items-center gap-2 rounded-lg border border-[#2f6fed]/40 bg-[#0c1730] px-3 py-1.5 text-xs text-[#7eb6ff]"
+                    role="status"
+                  >
+                    <span className="inline-block h-2 w-2 animate-ping rounded-full bg-[#2f6fed]" />
+                    <span>ASR 正在上传与转写语音…（预计 3-5 秒，请稍候）</span>
+                  </div>
                 ) : null}
               </div>
               {voiceMeta ? (
-                <p className="mt-2 break-anywhere text-xs text-[#b7c8e2]" role="status">
-                  {voiceMeta}
+                <p className="mt-2 break-anywhere text-xs text-[#7ee787]" role="status">
+                  ✓ {voiceMeta}
                 </p>
               ) : null}
             </div>
@@ -961,11 +1006,14 @@ function InterviewPanel({
           </button>
 
           <div className="mt-6 border-t border-[#1d2c4e] pt-4">
-            <p className="text-xs text-[#5b6b85]">回答记录（本会话）</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-[#5b6b85]">回答记录与转写轨迹（本会话）</p>
+              <span className="text-xs text-[#5b6b85]">共 {answerLog.length} 条</span>
+            </div>
             {answerLog.length === 0 ? (
               <p className="mt-2 text-xs text-[#5b6b85]">暂无已提交回答。</p>
             ) : (
-              <div className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-1">
+              <div className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-1" aria-label="ASR转写轨迹">
                 {answerLog.map((entry) => (
                   <span
                     key={entry.key}
@@ -973,8 +1021,8 @@ function InterviewPanel({
                   >
                     第{entry.seq}题 ·{" "}
                     {entry.kind === "voice"
-                      ? `🎙 ${entry.durationS?.toFixed(1)}s / 停顿${entry.pauseCnt}`
-                      : "⌨ 文本"}
+                      ? `🎙 时长 ${entry.durationS?.toFixed(1)}s / 停顿 ${entry.pauseCnt} 次`
+                      : "⌨ 文本回答"}
                     {entry.isFollowup ? " · 追问" : ""}
                   </span>
                 ))}
@@ -1018,26 +1066,59 @@ function ProgressRail({ seq, isFollowup }: { seq: number; isFollowup: boolean })
   );
 }
 
-function QuestionSubtitle({ text }: { text: string }) {
+function InterviewerWaveform({ active }: { active: boolean }) {
+  const delays = ["0ms", "150ms", "300ms", "450ms", "300ms", "150ms", "0ms"];
+  return (
+    <div
+      className="flex items-center justify-center gap-1.5 py-3"
+      role="img"
+      aria-label="面试官声波动画"
+    >
+      {delays.map((delay, idx) => (
+        <span
+          key={idx}
+          className={`h-8 w-1.5 rounded-full transition-all duration-300 ${
+            active ? "wave-bar bg-[#2f6fed]" : "scale-y-25 bg-[#1f293d]"
+          }`}
+          style={{ animationDelay: active ? delay : undefined }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function QuestionSubtitle({
+  text,
+  onTypingChange,
+}: {
+  text: string;
+  onTypingChange?: (typing: boolean) => void;
+}) {
   const [shown, setShown] = useState(0);
   useEffect(() => {
     setShown(0);
     if (!text) {
+      onTypingChange?.(false);
       return;
     }
+    onTypingChange?.(true);
     const timer = setInterval(() => {
       setShown((n) => {
         if (n >= text.length) {
           clearInterval(timer);
+          onTypingChange?.(false);
           return n;
         }
         return n + 1;
       });
     }, 40);
-    return () => clearInterval(timer);
-  }, [text]);
+    return () => {
+      clearInterval(timer);
+      onTypingChange?.(false);
+    };
+  }, [text, onTypingChange]);
   return (
-    <p className="mt-6 min-h-24 break-anywhere text-lg leading-8">
+    <p className="mt-4 min-h-20 break-anywhere text-lg leading-8">
       <span className="text-white">{text.slice(0, shown)}</span>
       <span className="text-[#3a4a66]">{text.slice(shown)}</span>
       {shown < text.length ? <span className="subtitle-caret text-[#ff8a2a]">▍</span> : null}
@@ -1274,7 +1355,12 @@ type RealSessionResult =
   | { kind: "network" }
   | { kind: "http"; status: number; code: string | null; serverMessage: string | null }
   | { kind: "invalid"; message: string }
-  | { kind: "ok"; sid: number; question: Question };
+  | {
+      kind: "ok";
+      sid: number;
+      question: Question;
+      transitionAudioUrls: string[];
+    };
 
 async function requestRealSession(jobId: number): Promise<RealSessionResult> {
   let response: Response;
@@ -1301,17 +1387,19 @@ async function requestRealSession(jobId: number): Promise<RealSessionResult> {
   } catch {
     return { kind: "invalid", message: "会话响应不是合法 JSON。未进入面试。" };
   }
-  const parsed = parseSession(payload);
+  const parsed = parseSessionResponse(payload);
   if (!parsed.ok) {
     return { kind: "invalid", message: parsed.message };
   }
-  return { kind: "ok", sid: parsed.value.sid, question: parsed.value.question };
+  return {
+    kind: "ok",
+    sid: parsed.value.sid,
+    question: parsed.value.question,
+    transitionAudioUrls: parsed.value.transitionAudioUrls,
+  };
 }
 
-type AnswerOk =
-  | { type: "followup"; question: Question; transitionAudioUrl: string | null }
-  | { type: "next"; question: Question; transitionAudioUrl: string | null }
-  | { type: "done"; reportId: number; transitionAudioUrl: string | null };
+type AnswerOk = AnswerData;
 
 type TextAnswerResult =
   | { kind: "network" }
@@ -1436,94 +1524,6 @@ function parseJobs(payload: unknown): ParseOk<Job[]> | ParseErr {
     });
   }
   return { ok: true, value: jobs };
-}
-
-function parseSession(payload: unknown): ParseOk<{ sid: number; question: Question }> | ParseErr {
-  const invalid =
-    "会话响应格式不正确：sid 须为正整数，question.text 须为非空字符串，seq 须为 1–6 的整数，audio_url 须为 null 或非空字符串。未进入面试。";
-  if (!isRecord(payload) || !isPositiveInt(payload.sid) || !isRecord(payload.question)) {
-    return { ok: false, message: invalid };
-  }
-  const question = parseQuestion(payload.question);
-  if (!question) {
-    return { ok: false, message: invalid };
-  }
-  return {
-    ok: true,
-    value: {
-      sid: payload.sid,
-      question,
-    },
-  };
-}
-
-function parseAnswerResponse(payload: unknown): ParseOk<AnswerOk> | ParseErr {
-  const invalid =
-    "回答响应格式不正确：type 须为 followup/next/done；followup/next 须含合法 question；done.report_id 须为正整数；transition_audio_url 若存在须为 null 或非空字符串。未推进题目。";
-  if (!isRecord(payload) || typeof payload.type !== "string") {
-    return { ok: false, message: invalid };
-  }
-  if (!isOptionalAudioUrl(payload.transition_audio_url)) {
-    return { ok: false, message: invalid };
-  }
-  const transitionAudioUrl = isAudioUrl(payload.transition_audio_url)
-    ? payload.transition_audio_url
-    : null;
-
-  if (payload.type === "done") {
-    if (!isPositiveInt(payload.report_id)) {
-      return { ok: false, message: invalid };
-    }
-    return {
-      ok: true,
-      value: { type: "done", reportId: payload.report_id, transitionAudioUrl },
-    };
-  }
-
-  if (payload.type === "followup" || payload.type === "next") {
-    if (!isRecord(payload.question)) {
-      return { ok: false, message: invalid };
-    }
-    const question = parseQuestion(payload.question);
-    if (!question) {
-      return { ok: false, message: invalid };
-    }
-    return {
-      ok: true,
-      value: { type: payload.type, question, transitionAudioUrl },
-    };
-  }
-
-  return { ok: false, message: invalid };
-}
-
-function parseQuestion(value: Record<string, unknown>): Question | null {
-  if (typeof value.text !== "string" || value.text.trim().length === 0) {
-    return null;
-  }
-  if (!isQuestionSeq(value.seq)) {
-    return null;
-  }
-  if (!isAudioUrl(value.audio_url)) {
-    return null;
-  }
-  return {
-    text: value.text,
-    audioUrl: value.audio_url,
-    seq: value.seq,
-  };
-}
-
-function isOptionalAudioUrl(value: unknown): boolean {
-  return value === undefined || isAudioUrl(value);
-}
-
-function isAudioUrl(value: unknown): value is string | null {
-  return value === null || (typeof value === "string" && value.length > 0);
-}
-
-function isQuestionSeq(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= TOTAL_QUESTIONS;
 }
 
 function isPositiveInt(value: unknown): value is number {

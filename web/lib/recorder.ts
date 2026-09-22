@@ -311,3 +311,16 @@ function isOptionalAudioUrl(v: unknown): boolean {
   }
   return typeof v === "string" && v.trim().length > 0;
 }
+
+/**
+ * 纯函数：根据题号下标选取对应的预生成过渡语音频 URL（AGENTS §6.2）。
+ * 数组为空或非合法字符串时返回 null。
+ */
+export function pickTransitionAudioUrl(urls: string[], index: number): string | null {
+  if (!Array.isArray(urls) || urls.length === 0) {
+    return null;
+  }
+  const positiveIndex = Math.max(0, Math.floor(index));
+  const picked = urls[positiveIndex % urls.length];
+  return typeof picked === "string" && picked.trim().length > 0 ? picked.trim() : null;
+}

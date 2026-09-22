@@ -182,3 +182,28 @@ describe("parseAnswerResponse（回答推进与过渡语响应解析）", () => 
     assert.equal(parseAnswerResponse({ type: "done", report_id: 0 }).ok, false);
   });
 });
+
+describe("pickTransitionAudioUrl（过渡语轮转选择纯函数）", () => {
+  it("正常从列表中按序号轮转选择", async () => {
+    const { pickTransitionAudioUrl } = await import("../lib/recorder.ts");
+    const list = [
+      "/audio/trans_0.mp3",
+      "/audio/trans_1.mp3",
+      "/audio/trans_2.mp3",
+    ];
+    assert.equal(pickTransitionAudioUrl(list, 0), "/audio/trans_0.mp3");
+    assert.equal(pickTransitionAudioUrl(list, 1), "/audio/trans_1.mp3");
+    assert.equal(pickTransitionAudioUrl(list, 2), "/audio/trans_2.mp3");
+    // 轮转回到第 0 项
+    assert.equal(pickTransitionAudioUrl(list, 3), "/audio/trans_0.mp3");
+  });
+
+  it("空列表或非法参数安全返回 null，不抛异常", async () => {
+    const { pickTransitionAudioUrl } = await import("../lib/recorder.ts");
+    assert.equal(pickTransitionAudioUrl([], 0), null);
+    // @ts-expect-error 测试非数组输入
+    assert.equal(pickTransitionAudioUrl(null, 0), null);
+    // 包含空白字符的安全处理
+    assert.equal(pickTransitionAudioUrl(["  ", ""], 0), null);
+  });
+});
