@@ -379,28 +379,41 @@
 
 ## T7-G1-P8 评分版本闸门验收
 
-范围：在 `feature/T7-growth-integration@c1b395d` 上，用 ASR CJK 规范化后的语音链路新建完整语音会话；**不改 sid=5**（本 worktree 演示库无 sid=5；验收库 `data/p8_gate.db` 独立）。音频为 **受控真实中文 WebM**（Windows SAPI Huihui → ffmpeg opus），**非真人验收**，仅作技术闸门。
+范围：在 `feature/T7-growth-integration`（起点 `1c0d706`，验收提交 `288e488`）上，用 ASR CJK 规范化后的语音链路新建完整语音会话；**不改 sid=5**（本 worktree 演示库无 sid=5；验收库 `data/p8_gate.db` 独立，已清理）。音频为 **受控真实中文 WebM**（Windows SAPI → ffmpeg opus），**标注：受控音频验收，非真人麦克风验收**。
 
 ### 语音闸门结果
 
 | 项 | 值 |
 | --- | --- |
-| 新 sid / report_id | **1 / 1**（库 `data/p8_gate.db`） |
-| 语音提交次数 | **8**（主问 6 + 追问 2；全部 `POST .../answers`） |
-| professional_match | score=80.0，evidence=`超声波雷达与毫米波雷达的台价标定`，字面子串 **通过** |
-| logic_structure | score=87.5，evidence=`先复现缺陷用系统日志和传感器回放数据`，字面子串 **通过** |
-| job_competence | score=89.0，evidence=`坚持功能安全底线组织跨部门风险评`（落库完整子串），字面子串 **通过** |
-| expression_fluency | score=97.0（真实声学；evidence=null） |
-| overall | 88.4 |
-| 落库答案 CJK 间空格 | **无** |
-| P8 | **通过** |
-| SCORING_VERSION | 验收后启用 `"v1"`（此前该会话报告仍为 NULL，属闸门前样本，不回填） |
+| 新 sid / report_id | **1 / 1**（库 `data/p8_gate.db`，已清理） |
+| 学生 / 岗位 | user_id=**3**（王*明）/ job_id=**1**（智驾测试） |
+| input_mode | `voice` |
+| 主问题 / 追问 / 总回答 | **6 / 2 / 8**（全部 `POST .../answers` multipart） |
+| professional_match | score=**80.0**，evidence=`超声波雷达与毫米波雷达的台价标定`（len=16），字面子串命中 answer_id=**1** q_seq=**1** |
+| logic_structure | score=**87.5**，evidence=`先复现缺陷用系统日志和传感器回放数据`（len=18），字面子串命中 answer_id=**2** q_seq=**2** |
+| job_competence | score=**89.0**，evidence=`坚持功能安全底线组织跨部门风险评审`（len=18），字面子串命中 answer_id=**6** q_seq=**5**（追问） |
+| expression_fluency | score=**97.0**（确定性声学；evidence=null）；语速205字/分、停顿1.1次/分、填充词0.0个/分；样本含真实 duration_s/wpm/pause_cnt/filler_cnt（8 条） |
+| overall | **88.4** |
+| 落库答案 CJK–CJK 间空格 | **无**（8/8） |
+| P8 | **【通过】** |
+| SCORING_VERSION | 验收后启用 **`"v1"`**（闸门会话报告当时仍为 NULL，属闸门前样本，**不回填**） |
 
 ### 代码与测试
 
-- `server/services/scoring.py`：`SCORING_VERSION="v1"`
-- 测试：新报告 v1、legacy NULL 不回填、trend overall 对 legacy/v1 不可比；前端 cohort 拆线既有用例保留
+- `server/services/scoring.py`：`SCORING_VERSION="v1"`（仅改常量；未改算法/prompt/evidence/双评）
+- 自动化：新报告 v1、legacy NULL 不回填、history 原样、trend overall 对 legacy/v1 不可比、前端 cohort 拆线、evidence 字面规则、input_mode 隔离不回归
+- 受控音频 / 临时 DB / 结果 JSON：**不入库**；验收后清理，不以 `.gitignore` 掩盖未跟踪目录
+
+### 门禁（P8 收尾重跑）
+
+| 检查 | 退出码 |
+| --- | --- |
+| 全量 pytest | 0（86 passed, 2 skipped） |
+| `web/npm test` | 0（59 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build` | 0 |
+| `git diff --check` | 0 |
 
 ### 宣称纪律
 
-本轮为受控合成中文 WebM 技术闸门，**不得宣称真人语音验收**。
+本轮为受控合成中文 WebM 技术闸门，**不得宣称真人语音验收**。**未合入 main**。
