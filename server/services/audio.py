@@ -24,9 +24,29 @@ class AudioProcessError(Exception):
     """ffmpeg/ffprobe 环境缺失或转码执行失败 → 503 AUDIO_PROCESS_FAILED"""
 
 
+async def prepare_wav(webm_path: str, wav_path: str) -> None:
+    """Keep subprocess waits off the event loop and keep files alive on cancellation."""
+    import asyncio
+    import time
+    def convert():
+        begin = time.perf_counter()
+        probe_webm(webm_path)
+        transcode_to_16k_wav(webm_path, wav_path)
+        logger.info("audio stage=prepare total_ms=%.1f", (time.perf_counter() - begin) * 1000)
+    task = asyncio.create_task(asyncio.to_thread(convert))
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        try:
+            await task
+        except Exception:
+            pass
+        raise
+
+
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=settings.asr_timeout_s)
+        return subprocess.run(cmd, capture_output=True, timeout=settings.audio_process_timeout_s)
     except (FileNotFoundError, PermissionError, OSError) as exc:
         raise AudioProcessError(f"外部工具不可执行: {cmd[0]}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:

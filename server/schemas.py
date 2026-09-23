@@ -8,6 +8,15 @@ class QuestionResponse(BaseModel):
     seq: int
 
 
+class SessionStateResponse(BaseModel):
+    sid: int
+    status: str
+    answer_count: int
+    question: QuestionResponse | None
+    is_followup: bool
+    report_id: int | None
+
+
 class SessionCreateRequest(BaseModel):
     job_id: int = Field(..., ge=1)
     user_id: int = Field(..., ge=1)

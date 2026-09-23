@@ -346,11 +346,11 @@ export default function HomePage() {
       setBusy(false);
       setHold(true);
       if (outcome.reason === "timeout") {
-        setConfirmHref(buildInterviewReportHref(sid));
+        setConfirmHref(null);
         setNotice(TIMEOUT_NOTICE);
       } else {
-        setConfirmHref(buildInterviewReportHref(sid));
-        setNotice("结果状态仍未知，请打开报告页确认。未自动重发。");
+        setConfirmHref(null);
+        setNotice("结果状态仍未知，请保持此页面并稍后重新开始会话。未自动重发。");
       }
       return "stopped";
     }
@@ -405,6 +405,7 @@ export default function HomePage() {
       | { kind: "ok"; value: AnswerData },
     sid: number,
     channel: "voice" | "text",
+    expectedAnswerCount: number,
   ): Promise<{ flow: "navigated" | "advanced" | "stopped"; value?: AnswerData }> {
     const post = toAnswerPostResult(result);
     if (isAmbiguousSubmitFailure(post) || shouldConfirmReportReadOnly(post)) {
@@ -414,7 +415,10 @@ export default function HomePage() {
       setConfirmHref(null);
       setNotice(CONFIRMING_NOTICE);
     }
-    const outcome = await resolveAfterAnswerSubmit(post, sid, makeRecoveryDeps());
+    const outcome = await resolveAfterAnswerSubmit(post, sid, {
+      ...makeRecoveryDeps(),
+      expectedAnswerCount,
+    });
     if (outcome.outcome === "answer_ok") {
       return { flow: "advanced", value: outcome.value as AnswerData };
     }
@@ -623,7 +627,7 @@ export default function HomePage() {
     );
     setVoicePhase("idle");
 
-    const resolved = await resolveSubmitResult(result, view.sid, "voice");
+    const resolved = await resolveSubmitResult(result, view.sid, "voice", answerLog.length);
     if (resolved.flow === "navigated" || resolved.flow === "stopped") {
       return;
     }
@@ -712,7 +716,7 @@ export default function HomePage() {
     // 提交文本回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖大模型时延（AGENTS §6.2）
     playTransitionAudio(view.transitionAudioUrls, answerLog.length);
     const result = await requestTextAnswer(view.sid, normalized);
-    const resolved = await resolveSubmitResult(result, view.sid, "text");
+    const resolved = await resolveSubmitResult(result, view.sid, "text", answerLog.length);
     if (resolved.flow === "navigated" || resolved.flow === "stopped") {
       return;
     }
@@ -1052,7 +1056,7 @@ function DeviceCheckPanel({
   }
 
   return (
-    <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
+    <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-4 shadow-[0_0_32px_rgba(47,111,237,0.35)] sm:p-5">
       <h2 className="text-xl text-white">设备自检</h2>
       <p className="mt-2 break-anywhere text-sm leading-6 text-[#b7c8e2]">
         岗位「{job.title}」已选择。开始前请完成 3 秒麦克风自检：录音后回放，确认能听到自己的声音。
@@ -1223,7 +1227,7 @@ function InterviewPanel({
               {startedAtMs !== null ? <InterviewTimer startedAtMs={startedAtMs} /> : null}
             </div>
           </div>
-          <p className="mt-6 text-sm text-[#7eb6ff]">{job.family}</p>
+          <p className="mt-3 text-sm text-[#7eb6ff]">{job.family}</p>
           <h2 className="mt-1 break-anywhere text-2xl text-white">{job.title}</h2>
           {sid !== null ? <p className="mt-2 text-sm text-[#9fb4d4]">会话 {sid}</p> : null}
           <div className="my-2 flex flex-col items-center justify-center">
@@ -1265,7 +1269,7 @@ function InterviewPanel({
           ) : null}
 
           {mode === "real" ? (
-            <div className="mt-6 rounded-2xl border border-[#1d4ed8]/60 bg-[#070b14] p-4">
+            <div className="mt-4 rounded-2xl border border-[#1d4ed8]/60 bg-[#070b14] p-3">
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                 <span className="text-sm text-[#9fb4d4]">
                   语音回答（webm/opus，随录音提交时长与停顿统计）
@@ -1317,7 +1321,7 @@ function InterviewPanel({
                     role="status"
                   >
                     <span className="inline-block h-2 w-2 animate-ping rounded-full bg-[#2f6fed]" />
-                    <span>ASR 正在上传与转写语音…（预计 3-5 秒，请稍候）</span>
+                    <span>语音正在上传、转写并生成下一步，请保持页面打开。</span>
                   </div>
                 ) : null}
               </div>
@@ -1329,10 +1333,10 @@ function InterviewPanel({
             </div>
           ) : null}
 
-          <label className="mt-6 block min-w-0 max-w-full">
+          <label className="mt-4 block min-w-0 max-w-full">
             <span className="text-sm text-[#9fb4d4]">文本回答</span>
             <textarea
-              className="mt-2 min-h-36 w-full max-w-full resize-y rounded-2xl border border-[#2f6fed] bg-[#070b14] px-4 py-3 text-sm leading-6 text-white outline-none focus:border-[#ff8a2a]"
+              className="mt-2 min-h-24 w-full max-w-full resize-y rounded-2xl border border-[#2f6fed] bg-[#070b14] px-4 py-3 text-sm leading-6 text-white outline-none focus:border-[#ff8a2a]"
               value={answerText}
               disabled={busy || hold || voicePhase !== "idle"}
               onChange={(event) => {

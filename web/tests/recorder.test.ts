@@ -357,6 +357,41 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+describe("session-recovery（中途断连）", () => {
+  it("只读查询已提交的下一题，不等待不存在的最终报告", async () => {
+    const { resolveAfterAnswerSubmit, createVirtualClock } = await import("../lib/session-recovery.ts");
+    const clock = createVirtualClock();
+    const urls: string[] = [];
+    const result = await resolveAfterAnswerSubmit({ kind: "network" }, 7, {
+      ...clock, expectedAnswerCount: 0,
+      fetch: async (url: string) => {
+        urls.push(url);
+        return jsonResponse(200, { sid: 7, status: "active", answer_count: 1,
+          question: { seq: 2, text: "下一题", audio_url: null }, is_followup: false, report_id: null });
+      },
+    });
+    assert.deepEqual(urls, ["/api/sessions/7/state"]);
+    assert.equal(result.outcome, "answer_ok");
+    if (result.outcome === "answer_ok") assert.equal((result.value as { type: string }).type, "next");
+  });
+
+  it("后台尚未接受请求或仍处理中时保持锁定，绝不自动重发", async () => {
+    const { resolveAfterAnswerSubmit, createVirtualClock } = await import("../lib/session-recovery.ts");
+    for (const status of ["active", "answering"]) {
+      const clock = createVirtualClock();
+      const result = await resolveAfterAnswerSubmit({ kind: "http", status: 504, code: null, serverMessage: null }, 7, {
+        ...clock, expectedAnswerCount: 0, maxMs: 20, intervalMs: 10,
+        fetch: async (url: string) => {
+          assert.equal(url, "/api/sessions/7/state");
+          return jsonResponse(200, { sid: 7, status, answer_count: 0,
+            question: { seq: 1, text: "当前题", audio_url: null }, is_followup: false, report_id: null });
+        },
+      });
+      assert.equal(result.outcome, "still_unknown");
+    }
+  });
+});
+
 describe("session-recovery（最终评分断连后只读报告恢复）", () => {
   it("A. POST 只调用一次；网络异常后报告 404→404→200，最终返回成功报告", async () => {
     const {

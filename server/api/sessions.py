@@ -7,7 +7,7 @@ import tempfile
 from typing import Annotated
 from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Path, UploadFile
-from sqlalchemy import and_, func, or_, update
+from sqlalchemy import and_, func, or_, select, update
 
 from server.config import settings
 from server.db import SessionLocal
@@ -20,6 +20,7 @@ from server.schemas import (
     QuestionResponse,
     SessionCreateRequest,
     SessionCreateResponse,
+    SessionStateResponse,
     TextAnswerRequest,
 )
 from server.services import asr as asr_service
@@ -32,6 +33,33 @@ from server.services.scoring import ScoringUnavailableError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+
+@router.get("/{sid}/state", response_model=SessionStateResponse)
+def get_session_state(sid: int = Path(..., ge=1)):
+    # One SQL statement gives a consistent view of the committed answer and question.
+    count = select(func.count(Answer.id)).where(Answer.session_id == Session.id).correlate(Session).scalar_subquery()
+    report_id = select(func.max(Report.id)).where(Report.session_id == Session.id).correlate(Session).scalar_subquery()
+    with SessionLocal() as db:
+        row = db.execute(select(Session, count, report_id).where(Session.id == sid)).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail={"code": "SESSION_NOT_FOUND", "message": "面试会话不存在"})
+        sess, answer_count, rid = row
+        pending = sess.pending_question_json or {}
+        question = None
+        if (
+            sess.status != "completed"
+            and isinstance(pending.get("text"), str)
+            and isinstance(pending.get("seq"), int)
+        ):
+            question = QuestionResponse(
+                text=pending["text"], seq=pending["seq"], audio_url=pending.get("audio_url")
+            )
+        return SessionStateResponse(
+            sid=sid, status=sess.status, answer_count=answer_count,
+            question=question,
+            is_followup=bool(pending.get("is_followup", False)), report_id=rid,
+        )
 
 
 def _release_lease(db, sid: int, token: str) -> None:
@@ -335,7 +363,7 @@ async def submit_text_answer(
             filler_cnt,
         )
 
-    biz_task = asyncio.create_task(_execute_business())
+    biz_task = asyncio.create_task(asyncio.wait_for(_execute_business(), settings.answer_timeout_s))
     cancel_task = asyncio.create_task(cancel_event.wait())
 
     try:
@@ -392,6 +420,14 @@ async def submit_text_answer(
                 "code": "SCORING_UNAVAILABLE",
                 "message": "评分服务暂时不可用，请稍后重试",
             },
+        )
+    except asyncio.TimeoutError:
+        with SessionLocal() as db_clean:
+            _release_lease(db_clean, sid, my_token)
+            db_clean.commit()
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "ANSWER_TIMEOUT", "message": "本次回答处理超时，未推进题目，请重试"},
         )
     except Exception:
         with SessionLocal() as db_clean:
@@ -637,8 +673,7 @@ async def submit_audio_answer(
 
         async def _execute_business():
             # 探测→转码→ASR：持租约执行，失败统一释放租约，不产生 Answer
-            audio_service.probe_webm(webm_path)
-            audio_service.transcode_to_16k_wav(webm_path, wav_path)
+            await audio_service.prepare_wav(webm_path, wav_path)
             answer_text = await asr_service.transcribe_wav(wav_path)
             if not answer_text.strip():
                 raise ASRUnavailableError("转写结果为空，疑似无效音频")
@@ -745,7 +780,7 @@ async def submit_audio_answer(
                 answer_text,
             )
 
-        biz_task = asyncio.create_task(_execute_business())
+        biz_task = asyncio.create_task(asyncio.wait_for(_execute_business(), settings.answer_timeout_s))
         cancel_task = asyncio.create_task(cancel_event.wait())
 
         try:
@@ -823,6 +858,14 @@ async def submit_audio_answer(
             raise HTTPException(
                 status_code=503,
                 detail={"code": "SCORING_UNAVAILABLE", "message": "评分服务暂时不可用，请稍后重试"},
+            )
+        except asyncio.TimeoutError:
+            with SessionLocal() as db_clean:
+                _release_lease(db_clean, sid, my_token)
+                db_clean.commit()
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "ANSWER_TIMEOUT", "message": "本次回答处理超时，未推进题目，请重新录音"},
             )
         except Exception:
             with SessionLocal() as db_clean:

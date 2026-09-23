@@ -1,21 +1,23 @@
 /**
- * 最终评分长请求断连后的只读报告恢复。
- * 硬约束：结果不明时绝不自动重发答案 POST；仅轮询 GET /api/reports/{sid}。
+ * 答案长请求断连后的只读会话/报告恢复。
+ * 硬约束：结果不明时绝不自动重发答案 POST。
  */
 
 import { parseReportResponse, type ReportData } from "./report-data.ts";
+import { parseAnswerResponse } from "./recorder.ts";
 
 /** 轮询间隔（毫秒）。集中定义，禁止散落魔数。 */
 export const REPORT_POLL_INTERVAL_MS = 2000;
 /** 最长轮询时长（毫秒）。 */
 export const REPORT_POLL_MAX_MS = 120_000;
 
-export const CONFIRMING_NOTICE = "正在确认评分结果，请勿重复提交";
-export const TIMEOUT_NOTICE = "结果状态仍未知，请打开报告页确认";
+export const CONFIRMING_NOTICE = "正在确认回答处理进度，请勿重复提交";
+export const TIMEOUT_NOTICE = "暂时无法确认处理进度，请稍后重新确认；不要重复提交回答。";
 
 /** 已知业务 detail.code；带这些码的响应不按「反代式不明 500」处理。 */
 export const KNOWN_BUSINESS_CODES = [
   "ANSWER_IN_PROGRESS",
+  "ANSWER_TIMEOUT",
   "ASR_UNAVAILABLE",
   "AUDIO_PROCESS_FAILED",
   "AUDIO_INVALID",
@@ -81,6 +83,7 @@ export type RecoveryDeps = {
   intervalMs?: number;
   maxMs?: number;
   now?: () => number;
+  expectedAnswerCount?: number;
 };
 
 function isKnownBusinessCode(code: string | null): code is KnownBusinessCode {
@@ -97,7 +100,7 @@ export function isAmbiguousSubmitFailure(post: AnswerPostResult): boolean {
   if (post.kind === "network") {
     return true;
   }
-  if (post.kind === "http" && post.status === 500 && !isKnownBusinessCode(post.code)) {
+  if (post.kind === "http" && [500, 502, 504].includes(post.status) && !isKnownBusinessCode(post.code)) {
     return true;
   }
   return false;
@@ -275,6 +278,13 @@ export async function resolveAfterAnswerSubmit(
     return { outcome: "answer_ok", value: postResult.value };
   }
 
+  if (deps.expectedAnswerCount !== undefined && (
+    shouldEnterReportRecovery(postResult) || postResult.kind === "invalid" ||
+    (postResult.kind === "http" && postResult.code === "ANSWER_IN_PROGRESS")
+  )) {
+    return recoverSession(sid, deps);
+  }
+
   if (postResult.kind === "invalid") {
     return { outcome: "invalid_locked", message: postResult.message };
   }
@@ -312,7 +322,8 @@ export async function resolveAfterAnswerSubmit(
     }
     if (
       code === "ASR_UNAVAILABLE" ||
-      code === "AUDIO_PROCESS_FAILED"
+      code === "AUDIO_PROCESS_FAILED" ||
+      code === "ANSWER_TIMEOUT"
     ) {
       return {
         outcome: "retryable_client",
@@ -352,6 +363,63 @@ export async function resolveAfterAnswerSubmit(
     return { outcome: "still_unknown", reason: "network" };
   }
   return { outcome: "still_unknown", reason: "unexpected_http" };
+}
+
+/** Recover only committed state. An unchanged active snapshot is not proof a delayed POST cannot arrive. */
+async function recoverSession(sid: number, deps: RecoveryDeps): Promise<ResolveOutcome> {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + (deps.maxMs ?? REPORT_POLL_MAX_MS);
+  while (now() < deadline) {
+    if (deps.signal?.aborted) return { outcome: "aborted" };
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    deps.signal?.addEventListener("abort", cancel, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error("state request timeout")); },
+          Math.min(10_000, deadline - now()));
+      });
+      const response = await Promise.race([
+        deps.fetch(`/api/sessions/${sid}/state`, { method: "GET", cache: "no-store", signal: controller.signal }),
+        timeout,
+      ]);
+      if (response.status === 404) return { outcome: "session_not_found" };
+      if (!response.ok) return { outcome: "still_unknown", reason: "unexpected_http" };
+      const raw: unknown = await Promise.race([response.json(), timeout]);
+      if (!raw || typeof raw !== "object") return { outcome: "still_unknown", reason: "invalid_report" };
+      const state = raw as Record<string, unknown>;
+      if (state.sid !== sid || !Number.isInteger(state.answer_count) ||
+          (state.answer_count as number) < 0 || !["active", "answering", "completed"].includes(String(state.status))) {
+        return { outcome: "still_unknown", reason: "invalid_report" };
+      }
+      if (state.status === "completed") {
+        const parsed = parseAnswerResponse({ type: "done", report_id: state.report_id });
+        return parsed.ok ? { outcome: "answer_ok", value: parsed.value }
+          : { outcome: "still_unknown", reason: "invalid_report" };
+      }
+      if (state.status === "active" && state.answer_count === deps.expectedAnswerCount! + 1 &&
+          typeof state.is_followup === "boolean") {
+        const parsed = parseAnswerResponse({ type: state.is_followup ? "followup" : "next", question: state.question });
+        return parsed.ok ? { outcome: "answer_ok", value: parsed.value }
+          : { outcome: "still_unknown", reason: "invalid_report" };
+      }
+      if ((state.answer_count as number) > deps.expectedAnswerCount! + 1) {
+        return { outcome: "invalid_locked", message: "此会话已在其他页面继续，请使用原页面完成面试。" };
+      }
+    } catch {
+      return deps.signal?.aborted ? { outcome: "aborted" } : { outcome: "still_unknown", reason: "network" };
+    } finally {
+      clearTimeout(timer);
+      deps.signal?.removeEventListener("abort", cancel);
+    }
+    try {
+      await deps.sleep(Math.min(deps.intervalMs ?? REPORT_POLL_INTERVAL_MS, Math.max(0, deadline - now())), deps.signal);
+    } catch {
+      return { outcome: "aborted" };
+    }
+  }
+  return { outcome: "still_unknown", reason: "timeout" };
 }
 
 /**

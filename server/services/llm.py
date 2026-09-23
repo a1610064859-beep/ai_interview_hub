@@ -1,4 +1,6 @@
 import json
+import asyncio
+import time
 import logging
 from pathlib import Path
 from typing import Type, TypeVar
@@ -50,9 +52,19 @@ class LLMClient:
         return float(getattr(self.settings, "llm_orchestration_timeout_s", getattr(self.settings, "orchestration_timeout_s", 6.0)))
 
     async def chat_json(self, stage: str, messages: list, response_model: Type[T]) -> T:
+        budget = self._timeout(stage)
+        try:
+            async with asyncio.timeout(budget):
+                return await self._attempts(stage, messages, response_model, time.monotonic() + budget)
+        except TimeoutError as exc:
+            raise LLMError("llm stage deadline exceeded") from exc
+
+    async def _attempts(self, stage, messages, response_model, deadline):
         last = None
-        for name, model, url, key in self._chain(stage):
+        chain = self._chain(stage)
+        for index, (name, model, url, key) in enumerate(chain):
             for retry in range(2):
+                started = time.monotonic()
                 record = {
                     "stage": stage,
                     "model": model,
@@ -60,6 +72,7 @@ class LLMClient:
                     "ttft_ms": None,
                     "total_tokens": None,
                     "error": None,
+                    "total_ms": 0.0,
                 }
                 if not url or not model:
                     record["error"] = "missing_config"
@@ -67,32 +80,48 @@ class LLMClient:
                     last = LLMError(f"missing config for {name}")
                     break
 
+                client = None
                 try:
-                    client = AsyncOpenAI(base_url=url, api_key=key)
-                    resp = await client.chat.completions.create(
+                    # Reserve time for fallback; SDK retries must not multiply this budget.
+                    remaining = max(0.001, deadline - time.monotonic())
+                    attempt_timeout = remaining / (len(chain) - index)
+                    client = AsyncOpenAI(base_url=url, api_key=key, max_retries=0)
+                    resp = await asyncio.wait_for(client.chat.completions.create(
                         model=model,
                         messages=messages,
                         response_format={"type": "json_object"},
-                        timeout=self._timeout(stage),
-                    )
+                        timeout=attempt_timeout,
+                    ), timeout=attempt_timeout)
+                    # Non-streaming client: this is the first point at which response content is available.
+                    record["ttft_ms"] = round((time.monotonic() - started) * 1000, 1)
                     usage = getattr(resp, "usage", None)
                     record["total_tokens"] = getattr(usage, "total_tokens", None)
+                    record["prompt_tokens"] = getattr(usage, "prompt_tokens", None)
+                    record["completion_tokens"] = getattr(usage, "completion_tokens", None)
                     data = resp.choices[0].message.content
                     result = response_model.model_validate_json(data)
                     record["success"] = True
-                    self._save_record(record)
                     return result
                 except ValidationError as e:
                     last = e
                     record["error"] = "validation_error"
-                    self._save_record(record)
                     if retry == 0:
                         continue
+                except asyncio.CancelledError:
+                    record["error"] = "stage_deadline_or_cancelled"
+                    raise
                 except Exception as e:
                     last = e
                     record["error"] = type(e).__name__
-                    self._save_record(record)
                     break
+                finally:
+                    record["total_ms"] = round((time.monotonic() - started) * 1000, 1)
+                    self._save_record(record)
+                    if client is not None and hasattr(client, "close"):
+                        try:
+                            await asyncio.wait_for(client.close(), timeout=0.25)
+                        except (Exception, asyncio.CancelledError):
+                            pass
         raise LLMError("all llm attempts failed") from last
 
 async def chat_json(stage: str, messages: list, response_model):

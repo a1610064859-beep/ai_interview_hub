@@ -4,6 +4,10 @@ const apiMode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
 const backendUrl = apiMode === "real" ? requireBackendUrl() : "";
 
 const nextConfig: NextConfig = {
+  // Backend total budget is 300s; allow bounded subprocess cancellation and transport overhead.
+  experimental: {
+    proxyTimeout: readProxyTimeout(process.env.API_PROXY_TIMEOUT_MS),
+  },
   async rewrites() {
     if (apiMode !== "real") {
       return [];
@@ -22,6 +26,12 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+function readProxyTimeout(raw: string | undefined): number {
+  const value = Number(raw ?? "360000");
+  if (!Number.isFinite(value) || value < 1000) throw new Error("API_PROXY_TIMEOUT_MS 必须为至少 1000 的毫秒数");
+  return value;
+}
 
 function readApiMode(raw: string | undefined): "mock" | "real" {
   if (raw === undefined) {

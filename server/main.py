@@ -10,6 +10,7 @@ from server.api.reports import router as reports_router
 from server.api.growth import router as growth_router
 from server.config import settings
 from server.db import init_db
+from server.services import asr
 
 
 @asynccontextmanager
@@ -17,6 +18,8 @@ async def lifespan(app: FastAPI):
     init_db()
     audio_dir = Path(settings.tts_output_dir)
     audio_dir.mkdir(parents=True, exist_ok=True)
+    if settings.asr_enabled and settings.asr_preload:
+        await asr.warmup()
     yield
 
 
@@ -30,6 +33,11 @@ app.include_router(jobs_router)
 app.include_router(sessions_router)
 app.include_router(reports_router)
 app.include_router(growth_router)
+
+
+@app.get("/api/asr/status")
+def get_asr_status():
+    return asr.service_status()
 
 
 @app.get("/audio/{filename:path}")
