@@ -137,6 +137,8 @@ async def test_score_interview_success():
         assert final_report["overall"] == 85.0
         assert len(final_report["highlights"]) > 0
         assert len(final_report["improvement"]) > 0
+        # P8：新报告口径为 v1（不放宽 evidence / 不单评冒充双评）
+        assert final_report["scoring_version"] == "v1"
 
 
 @pytest.mark.anyio

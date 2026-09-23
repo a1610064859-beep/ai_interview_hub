@@ -137,7 +137,7 @@ def _post_audio(client, sid, audio_bytes, duration_s="8.0", pause_cnt="2", filen
 
 
 def _create_session(client):
-    resp = client.post("/api/sessions", json={"job_id": 1})
+    resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
     assert resp.status_code == 200
     return resp.json()["sid"]
 

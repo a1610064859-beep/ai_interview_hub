@@ -10,6 +10,8 @@ class QuestionResponse(BaseModel):
 
 class SessionCreateRequest(BaseModel):
     job_id: int = Field(..., ge=1)
+    user_id: int = Field(..., ge=1)
+    mode: Literal["毕业生", "新生"]
     model_config = ConfigDict(extra="forbid")
 
 
@@ -71,3 +73,73 @@ class ReportResponse(BaseModel):
     highlights: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
     improvement: list[str] = Field(default_factory=list)
+
+
+class StudentItem(BaseModel):
+    id: int
+    name_masked: str | None = None
+    major: str | None = None
+    grade: str | None = None
+
+
+class StudentListResponse(BaseModel):
+    students: list[StudentItem]
+
+
+class GrowthHistoryRecord(BaseModel):
+    session_id: int
+    report_id: int
+    job_id: int
+    job_title: str
+    started_at: str | None = None
+    mode: str
+    input_mode: str | None = None
+    scoring_version: str | None = None
+    overall: float | None = None
+    dimensions: dict[str, float | None]
+    improvement: list[str] = Field(default_factory=list)
+
+
+class GrowthHistoryResponse(BaseModel):
+    user_id: int
+    job_id: int | None = None
+    records: list[GrowthHistoryRecord]
+
+
+class GrowthTrendPoint(BaseModel):
+    session_id: int
+    report_id: int
+    started_at: str | None = None
+    overall: float | None = None
+    dimensions: dict[str, float | None]
+
+
+class OverallSide(BaseModel):
+    session_id: int
+    overall: float | None = None
+
+
+class OverallComparison(BaseModel):
+    comparable: bool
+    reasons: list[str] = Field(default_factory=list)
+    message: str | None = None
+    previous: OverallSide | None = None
+    current: OverallSide | None = None
+    delta: float | None = None
+
+
+class DimensionChange(BaseModel):
+    previous: float
+    current: float
+    delta: float
+
+
+class GrowthTrendResponse(BaseModel):
+    user_id: int
+    job_id: int
+    job_title: str
+    input_mode: str | None = None
+    sessions_count: int
+    points: list[GrowthTrendPoint]
+    overall_comparison: OverallComparison
+    dimension_changes: dict[str, DimensionChange | None]

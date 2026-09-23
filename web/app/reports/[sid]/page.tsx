@@ -2,8 +2,14 @@
 
 import * as echarts from "echarts";
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  buildGrowthHref,
+  loadInterviewIdentity,
+  parseIdentityFromSearchParams,
+} from "../../../lib/growth-data";
 import {
   DIMENSION_LABEL_MAP,
   REQUIRED_DIMENSIONS,
@@ -52,9 +58,18 @@ async function readApiError(response: Response): Promise<{ code: string | null; 
   return { code: null, message: null };
 }
 
-export default function ReportPage({ params }: { params: Promise<{ sid: string }> }) {
+function ReportPageInner({ params }: { params: Promise<{ sid: string }> }) {
   const { sid: sidRaw } = use(params);
   const sid = parseSid(sidRaw);
+  const searchParams = useSearchParams();
+  const growthHref = useMemo(() => {
+    const fromQuery = parseIdentityFromSearchParams((key) => searchParams.get(key));
+    const identity = fromQuery ?? loadInterviewIdentity();
+    if (!identity) {
+      return "/growth";
+    }
+    return buildGrowthHref(identity.userId, identity.jobId);
+  }, [searchParams]);
   const [state, setState] = useState<LoadState>(() =>
     sid === null
       ? { kind: "param_error", message: "无效的报告访问地址，参数格式不合规" }
@@ -179,8 +194,27 @@ export default function ReportPage({ params }: { params: Promise<{ sid: string }
         />
       ) : null}
 
-      {state.kind === "ready" ? <ReportView report={state.report} /> : null}
+      {state.kind === "ready" ? (
+        <ReportView report={state.report} growthHref={growthHref} />
+      ) : null}
     </main>
+  );
+}
+
+export default function ReportPage({ params }: { params: Promise<{ sid: string }> }) {
+  return (
+    <Suspense
+      fallback={
+        <main className="cabin-shell mx-auto min-h-dvh w-full max-w-7xl overflow-x-hidden px-4 py-6 sm:px-6">
+          <section className="cabin-panel flex min-h-[60vh] flex-col items-center justify-center gap-4 p-8" role="status">
+            <div className="cabin-pulse h-16 w-16 rounded-full border border-cyan-400/40" />
+            <p className="text-sm text-slate-300">正在加载报告页…</p>
+          </section>
+        </main>
+      }
+    >
+      <ReportPageInner params={params} />
+    </Suspense>
   );
 }
 
@@ -223,7 +257,13 @@ function ErrorPanel({
   );
 }
 
-function ReportView({ report }: { report: ReportData }) {
+function ReportView({
+  report,
+  growthHref,
+}: {
+  report: ReportData;
+  growthHref: string;
+}) {
   const radar = useMemo(() => transformDimensionsToRadar(report.dimensions), [report.dimensions]);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
@@ -280,7 +320,7 @@ function ReportView({ report }: { report: ReportData }) {
             再次训练
           </Link>
           <Link
-            href="/growth"
+            href={growthHref}
             className="rounded-full border border-slate-500/50 bg-slate-800/80 px-4 py-2 text-sm text-slate-200"
           >
             查看成长记录

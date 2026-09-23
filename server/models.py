@@ -26,6 +26,7 @@ class Session(Base):
     pending_question_json: Mapped[dict|None]=mapped_column(JSON, nullable=True)
     lease_token: Mapped[str|None]=mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[datetime|None]=mapped_column(DateTime, nullable=True)
+    input_mode: Mapped[str|None]=mapped_column(String(16), nullable=True)
 class Answer(Base):
     __tablename__="answers"
     id: Mapped[int]=mapped_column(Integer, primary_key=True); session_id: Mapped[int]=mapped_column(Integer); q_seq: Mapped[int]=mapped_column(Integer)
@@ -35,3 +36,4 @@ class Report(Base):
     __tablename__="reports"
     id: Mapped[int]=mapped_column(Integer, primary_key=True); session_id: Mapped[int]=mapped_column(Integer)
     dimensions_json: Mapped[dict|None]=mapped_column(JSON); highlights_json: Mapped[dict|None]=mapped_column(JSON); concerns_json: Mapped[dict|None]=mapped_column(JSON); improvement_json: Mapped[dict|None]=mapped_column(JSON); overall: Mapped[float|None]=mapped_column(Float, nullable=True)
+    scoring_version: Mapped[str|None]=mapped_column(String(16), nullable=True)

@@ -19,13 +19,23 @@ import {
   CONFIRMING_NOTICE,
   TIMEOUT_NOTICE,
   isAmbiguousSubmitFailure,
-  reportPathForSid,
   resolveAfterAnswerSubmit,
   shouldConfirmReportReadOnly,
   type AnswerPostResult,
   type RecoveryDeps,
   type ResolveOutcome,
 } from "../lib/session-recovery";
+import {
+  AUDIENCE_MODES,
+  buildSessionCreateBody,
+  canCreateSession,
+  loadInterviewIdentity,
+  parseStudentsResponse,
+  persistInterviewIdentity,
+  resolveReportHref,
+  type AudienceMode,
+  type StudentProfile,
+} from "../lib/growth-data";
 
 const TOTAL_QUESTIONS = 6;
 const MOCK_FOLLOWUP_SEQ = 2;
@@ -66,8 +76,8 @@ type View =
   | { phase: "empty" }
   | { phase: "error"; message: string }
   | { phase: "jobs"; mode: ApiMode; jobs: Job[] }
-  | { phase: "device_check"; job: Job }
-  | { phase: "transition"; mode: ApiMode; job: Job }
+  | { phase: "device_check"; job: Job; userId: number; audienceMode: AudienceMode }
+  | { phase: "transition"; mode: ApiMode; job: Job; userId?: number; audienceMode?: AudienceMode }
   | {
       phase: "interview";
       mode: "mock";
@@ -86,6 +96,8 @@ type View =
       startedAtMs: number;
       transitionAudioUrls: string[];
       transitionAudioUrl: string | null;
+      userId: number;
+      audienceMode: AudienceMode;
     }
   | { phase: "mock_done"; job: Job };
 
@@ -116,6 +128,14 @@ export default function HomePage() {
   const voiceSubmitLockRef = useRef(false);
   const transitionTrackerRef = useRef(new TransitionAudioTracker());
   const recoveryAbortRef = useRef<AbortController | null>(null);
+  const [students, setStudents] = useState<StudentProfile[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [audienceMode, setAudienceMode] = useState<AudienceMode | null>("毕业生");
+  const interviewIdentityRef = useRef<{ userId: number; jobId: number } | null>(null);
+
+  function buildInterviewReportHref(sid: number): string {
+    return resolveReportHref(sid, interviewIdentityRef.current);
+  }
 
   useEffect(() => {
     const mode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
@@ -123,20 +143,35 @@ export default function HomePage() {
       return;
     }
     let alive = true;
-    void loadRealJobList().then((result) => {
+    void (async () => {
+      const [jobsResult, studentsResult] = await Promise.all([
+        loadRealJobList(),
+        loadRealStudentList(),
+      ]);
       if (!alive) {
         return;
       }
-      if (!result.ok) {
-        setView({ phase: "error", message: result.message });
+      if (!jobsResult.ok) {
+        setView({ phase: "error", message: jobsResult.message });
         return;
       }
-      if (result.value.length === 0) {
+      if (!studentsResult.ok) {
+        setView({ phase: "error", message: studentsResult.message });
+        return;
+      }
+      if (jobsResult.value.length === 0) {
         setView({ phase: "empty" });
         return;
       }
-      setView({ phase: "jobs", mode: "real", jobs: result.value });
-    });
+      setStudents(studentsResult.value);
+      const stored = loadInterviewIdentity();
+      const initialUser =
+        stored && studentsResult.value.some((s) => s.id === stored.userId)
+          ? stored.userId
+          : (studentsResult.value[0]?.id ?? null);
+      setSelectedUserId(initialUser);
+      setView({ phase: "jobs", mode: "real", jobs: jobsResult.value });
+    })();
     return () => {
       alive = false;
     };
@@ -217,7 +252,7 @@ export default function HomePage() {
     channel: "voice" | "text",
   ): Promise<"navigated" | "advanced" | "stopped"> {
     if (outcome.outcome === "report_ready") {
-      router.push(reportPathForSid(sid));
+      router.push(buildInterviewReportHref(sid));
       return "navigated";
     }
     if (outcome.outcome === "answer_ok") {
@@ -311,10 +346,10 @@ export default function HomePage() {
       setBusy(false);
       setHold(true);
       if (outcome.reason === "timeout") {
-        setConfirmHref(reportPathForSid(sid));
+        setConfirmHref(buildInterviewReportHref(sid));
         setNotice(TIMEOUT_NOTICE);
       } else {
-        setConfirmHref(reportPathForSid(sid));
+        setConfirmHref(buildInterviewReportHref(sid));
         setNotice("结果状态仍未知，请打开报告页确认。未自动重发。");
       }
       return "stopped";
@@ -403,14 +438,37 @@ export default function HomePage() {
       return;
     }
 
+    if (!canCreateSession(selectedUserId, job.id, audienceMode)) {
+      createLock.current = false;
+      setBusy(false);
+      setNotice("请先选择学生档案与受众模式（毕业生/新生），再选择岗位创建会话。");
+      return;
+    }
+
     // real 模式：先做 3 秒设备自检（录 3s → 回放 → 确认），通过后才进入面试舱
-    setView({ phase: "device_check", job });
+    setView({
+      phase: "device_check",
+      job,
+      userId: selectedUserId as number,
+      audienceMode: audienceMode as AudienceMode,
+    });
     setBusy(false);
   }
 
   async function enterInterview(mode: ApiMode, job: Job) {
     // 1.5s 座舱过场（AGENTS §9）；real 模式同时并行创建会话
-    setView({ phase: "transition", mode, job });
+    const realUserId =
+      view.phase === "device_check" ? view.userId : selectedUserId;
+    const realAudienceMode =
+      view.phase === "device_check" ? view.audienceMode : audienceMode;
+
+    setView({
+      phase: "transition",
+      mode,
+      job,
+      userId: mode === "real" ? (realUserId ?? undefined) : undefined,
+      audienceMode: mode === "real" ? (realAudienceMode ?? undefined) : undefined,
+    });
     const transition = sleep(TRANSITION_MS);
 
     if (mode === "mock") {
@@ -427,7 +485,20 @@ export default function HomePage() {
       return;
     }
 
-    const [result] = await Promise.all([requestRealSession(job.id), transition]);
+    if (!canCreateSession(realUserId, job.id, realAudienceMode)) {
+      createLock.current = false;
+      setBusy(false);
+      setView({
+        phase: "error",
+        message: "缺少学生档案或受众模式，无法创建会话。请返回岗位页重新选择。",
+      });
+      return;
+    }
+
+    const [result] = await Promise.all([
+      requestRealSession(realUserId as number, job.id, realAudienceMode as AudienceMode),
+      transition,
+    ]);
     if (result.kind === "network") {
       createLock.current = false; // 失败路径释放锁，允许重新选岗或重试
       setView({
@@ -450,6 +521,9 @@ export default function HomePage() {
       return;
     }
 
+    interviewIdentityRef.current = { userId: realUserId as number, jobId: job.id };
+    persistInterviewIdentity({ userId: realUserId as number, jobId: job.id });
+
     setView({
       phase: "interview",
       mode: "real",
@@ -460,6 +534,8 @@ export default function HomePage() {
       startedAtMs: Date.now(),
       transitionAudioUrls: result.transitionAudioUrls,
       transitionAudioUrl: null,
+      userId: realUserId as number,
+      audienceMode: realAudienceMode as AudienceMode,
     });
     setBusy(false);
   }
@@ -571,7 +647,7 @@ export default function HomePage() {
     if (value.type === "done") {
       voiceSubmitLockRef.current = false;
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
-      router.push(reportPathForSid(view.sid));
+      router.push(buildInterviewReportHref(view.sid));
       return;
     }
 
@@ -585,6 +661,8 @@ export default function HomePage() {
       startedAtMs: view.startedAtMs,
       transitionAudioUrls: view.transitionAudioUrls,
       transitionAudioUrl: value.transitionAudioUrl,
+      userId: view.userId,
+      audienceMode: view.audienceMode,
     });
     setVoiceMeta(null);
     setConfirmHref(null);
@@ -655,7 +733,7 @@ export default function HomePage() {
 
     if (value.type === "done") {
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
-      router.push(reportPathForSid(view.sid));
+      router.push(buildInterviewReportHref(view.sid));
       return;
     }
 
@@ -669,6 +747,8 @@ export default function HomePage() {
       startedAtMs: view.startedAtMs,
       transitionAudioUrls: view.transitionAudioUrls,
       transitionAudioUrl: value.transitionAudioUrl,
+      userId: view.userId,
+      audienceMode: view.audienceMode,
     });
     setAnswerText("");
     setConfirmHref(null);
@@ -716,6 +796,51 @@ export default function HomePage() {
             <h2 className="text-lg text-white">岗位列表</h2>
             <ModeBadge mode={view.mode} />
           </div>
+          {view.mode === "mock" ? (
+            <p className="mb-4 rounded-xl border border-[#2f6fed]/50 bg-[#0c1730] px-4 py-3 text-sm text-[#9fb4d4]">
+              演示模式 · 非正式数据：不加载真实学生档案，不伪装真实学生身份。
+            </p>
+          ) : (
+            <div className="mb-4 grid min-w-0 gap-3 md:grid-cols-2">
+              <label className="flex min-w-0 flex-col gap-2 text-sm text-[#9fb4d4]">
+                学生档案
+                <select
+                  className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
+                  value={selectedUserId ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setSelectedUserId(raw === "" ? null : Number(raw));
+                  }}
+                >
+                  {students.length === 0 ? <option value="">暂无学生档案</option> : null}
+                  {students.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.nameMasked} · {s.major ?? "专业未填"} · {s.grade ?? "年级未填"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex min-w-0 flex-col gap-2 text-sm text-[#9fb4d4]">
+                受众模式
+                <select
+                  className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
+                  value={audienceMode ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setAudienceMode(
+                      raw === "毕业生" || raw === "新生" ? raw : null,
+                    );
+                  }}
+                >
+                  {AUDIENCE_MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
           {notice ? (
             <p
               className="mb-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
@@ -725,26 +850,35 @@ export default function HomePage() {
             </p>
           ) : null}
           <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
-            {view.jobs.map((job) => (
-              <article
-                key={job.id}
-                className="min-w-0 max-w-full rounded-2xl border border-[#2f6fed] bg-[#0c1730]/90 p-5 shadow-[0_0_24px_rgba(47,111,237,0.28)]"
-              >
-                <p className="text-xs tracking-wide text-[#7eb6ff]">{job.family}</p>
-                <h3 className="mt-2 break-anywhere text-xl text-white">{job.title}</h3>
-                <p className="mt-3 break-anywhere text-sm leading-6 text-[#b7c8e2]">{job.jdDigest}</p>
-                <button
-                  type="button"
-                  className="mt-5 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={busy || hold}
-                  onClick={() => {
-                    void choose(view.mode, job);
-                  }}
+            {view.jobs.map((job) => {
+              const ready =
+                view.mode === "mock" ||
+                canCreateSession(selectedUserId, job.id, audienceMode);
+              return (
+                <article
+                  key={job.id}
+                  className="min-w-0 max-w-full rounded-2xl border border-[#2f6fed] bg-[#0c1730]/90 p-5 shadow-[0_0_24px_rgba(47,111,237,0.28)]"
                 >
-                  {view.mode === "real" ? "选择并自检设备" : "选择此岗位"}
-                </button>
-              </article>
-            ))}
+                  <p className="text-xs tracking-wide text-[#7eb6ff]">{job.family}</p>
+                  <h3 className="mt-2 break-anywhere text-xl text-white">{job.title}</h3>
+                  <p className="mt-3 break-anywhere text-sm leading-6 text-[#b7c8e2]">{job.jdDigest}</p>
+                  <button
+                    type="button"
+                    className="mt-5 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={busy || hold || !ready}
+                    onClick={() => {
+                      void choose(view.mode, job);
+                    }}
+                  >
+                    {view.mode === "real"
+                      ? ready
+                        ? "选择并自检设备"
+                        : "请先选择学生与模式"
+                      : "选择此岗位"}
+                  </button>
+                </article>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -1545,6 +1679,40 @@ function nonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+async function loadRealStudentList(): Promise<ParseOk<StudentProfile[]> | ParseErr> {
+  let response: Response;
+  try {
+    response = await fetch("/api/students", {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+  } catch {
+    return { ok: false, message: "网络失败，无法加载学生档案。未进入面试。" };
+  }
+  if (!response.ok) {
+    const info = await readApiError(response);
+    return {
+      ok: false,
+      message: formatApiError(info, "加载学生档案失败", "未进入面试。"),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, message: "学生档案响应不是合法 JSON。未进入面试。" };
+  }
+  try {
+    return { ok: true, value: parseStudentsResponse(payload) };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "学生档案响应非法。未进入面试。",
+    };
+  }
+}
+
 async function loadRealJobList(): Promise<ParseOk<Job[]> | ParseErr> {
   let response: Response;
   try {
@@ -1583,7 +1751,11 @@ type RealSessionResult =
       transitionAudioUrls: string[];
     };
 
-async function requestRealSession(jobId: number): Promise<RealSessionResult> {
+async function requestRealSession(
+  userId: number,
+  jobId: number,
+  mode: AudienceMode,
+): Promise<RealSessionResult> {
   let response: Response;
   try {
     response = await fetch("/api/sessions", {
@@ -1592,7 +1764,7 @@ async function requestRealSession(jobId: number): Promise<RealSessionResult> {
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ job_id: jobId }),
+      body: JSON.stringify(buildSessionCreateBody(userId, jobId, mode)),
       cache: "no-store",
     });
   } catch {

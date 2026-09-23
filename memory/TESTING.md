@@ -255,6 +255,21 @@
   - `ACCEPT_EXIT=0`；端口 `:18091` / `:34730` / `:9235` → CLEAN
 - 长评分断连恢复机制在合入后的 main 上已再验证；真人最终题全链路可作为 M2 关闭后的联调抽检项保留。
 
+## T7-G1-BE 成长追踪后端
+
+范围：学生身份归属、input_mode/scoring_version 列、成长只读 API、种子学生 3/4；不写 v1（待 ASR 规范化验收）。
+
+### 自动化
+
+| 项 | 状态 |
+| --- | --- |
+| tests/test_growth.py | 见本票门禁 |
+| 创建会话必填 user_id+mode | 旧请求体 422 |
+| 首答原子写 input_mode；混用 409 | text->voice 与 voice->text 双向 |
+| 同步 main 6f2facb（ASR CJK） | merge-base=6f2facb；保留双方 audio 测试 |
+| scoring_version 新报告保持 NULL | P8；测试用 fixture |
+| sid=5 | 不改写 |
+
 ## [T5-FIX] FunASR 中文字间空格规范化与评分证据恢复
 
 范围：仅 `server/services/asr.py` 增加 `normalize_asr_text`，在 `transcribe_wav` 返回前折叠 CJK–CJK 空白；不改 `validate_evidence`、不放宽 25 字、不动 sid=5、不写 `SCORING_VERSION`。文本答题不经过本函数。
@@ -285,3 +300,120 @@
 | 全量 pytest | 72 passed, 2 skipped |
 | `ASR_ACCEPTANCE_REAL=1` 真实 FunASR | 通过：落库文本无 CJK–CJK 间空格 |
 | sid=5 | **未改写、未重跑**（保留缺陷样本） |
+
+## T7-G1-FE 学生档案选择与成长追踪前端
+
+范围：`web/lib/growth-data.ts` 校验与折线转换；首页 real 模式学生/mode 选择与创建会话三字段；`/growth` 历史与趋势；报告页成长入口携带 `user_id`/`job_id`。不改 server、不改依赖。
+
+### 自动化
+
+| 项 | 状态 |
+| --- | --- |
+| growth-data 纯函数（请求体三项、双学生隔离、0/1/3 历史、null 不补零、connectNulls=false、不可比 reasons、报告链接、非法抛错） | 见 `npm test` |
+| `npm test` | 通过，退出码 0（52 pass） |
+| `npm run typecheck` | 通过，退出码 0 |
+| `npm run build` | 通过，退出码 0 |
+| `git diff --check` | 通过 |
+
+### 浏览器验收（mock/stub）
+
+- stub `:18092` + Next `:34731`（real rewrite）。
+- 首页/成长页 HTTP 200；`POST /api/sessions` 三字段 body → 200；仅 `job_id` → 422。
+- 学生4历史 `records:[]`（0 条空态数据源）。
+- 报告页成长链接为 CSR（加载报告后渲染）；`buildGrowthHref`/`buildReportHref` 由单元测试覆盖。
+- 验收后 `:18092` / `:34731` 已清理无监听。
+
+### 合入约束
+
+- 禁止直接合 main；经 Astra 审查后进入 `feature/T7-growth-integration`。
+
+## T7-G1-FE 定点修复（Astra 驳回 bc138de）
+
+范围：修复 `page.tsx` 无身份 `reportHrefFor` 自递归；趋势按 `(input_mode, scoring_version)` cohort 拆系列；同步 `main 6f2facb`。不改 T6 断连恢复、不改依赖/后端。
+
+### 修复点
+
+1. `resolveReportHref`：无身份 → `reportPathForSid`（`/reports/{sid}`）；有身份 → `?user_id=&job_id=`；本地函数改名 `buildInterviewReportHref`，禁止遮蔽。
+2. `transformTrendToLineOptions`：多 cohort 时 overall+四维全部拆系列，非本 cohort 填 null，`connectNulls=false`；text/voice、v1/v2、legacy 互不连线；单 cohort 保持综合分+四维。
+
+### 门禁
+
+| 检查 | 退出码 |
+| --- | --- |
+| `npm test` | 0（59 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build` | 0 |
+| 全量 pytest | 0（72 passed, 2 skipped） |
+| `git diff --check` | 见提交前 |
+
+不合入 main / integration；交 Astra 复审。
+
+## T7-G1-INTEGRATION 成长追踪集成分支联调
+
+范围：自 `main@6f2facb`（含 ASR CJK `ca9a75e`/`6f2facb`）建 `feature/T7-growth-integration`；`--no-ff` 先后合入 BE `f185b97`、FE `5fac0f6`；只解冲突、不重构；P8 保持 `SCORING_VERSION=None`；禁止合入 main。
+
+### 合并
+
+| 步骤 | 提交 |
+| --- | --- |
+| merge BE | `5a24ccc`（`6f2facb` + `f185b97`） |
+| merge FE | `c1b395d`（`5a24ccc` + `5fac0f6`） |
+| 冲突 | 仅 `memory/TESTING.md`（双方均改）；保留 BE 节 + FE 节，无生产代码冲突 |
+
+### 联调 stub
+
+- `tests/test_growth.py::test_integration_stub_matrix_and_p8_closed`
+- 覆盖：两学生两岗位、0/1/3 次、跨学生/跨岗位隔离、text/voice/legacy 不可比、创建三字段、P8 仍关闭
+
+### 门禁（integration worktree）
+
+| 检查 | 退出码 |
+| --- | --- |
+| 全量 pytest | 0（85 passed, 2 skipped） |
+| `web/npm test` | 0（59 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build` | 0 |
+| `git diff --check` / `main...HEAD` | 0 |
+
+不合入 main；交 Astra / 队长审查后另票合 main。
+
+## T7-G1-P8 评分版本闸门验收
+
+范围：在 `feature/T7-growth-integration`（起点 `1c0d706`，验收提交 `288e488`）上，用 ASR CJK 规范化后的语音链路新建完整语音会话；**不改 sid=5**（本 worktree 演示库无 sid=5；验收库 `data/p8_gate.db` 独立，已清理）。音频为 **受控真实中文 WebM**（Windows SAPI → ffmpeg opus），**标注：受控音频验收，非真人麦克风验收**。
+
+### 语音闸门结果
+
+| 项 | 值 |
+| --- | --- |
+| 新 sid / report_id | **1 / 1**（库 `data/p8_gate.db`，已清理） |
+| 学生 / 岗位 | user_id=**3**（王*明）/ job_id=**1**（智驾测试） |
+| input_mode | `voice` |
+| 主问题 / 追问 / 总回答 | **6 / 2 / 8**（全部 `POST .../answers` multipart） |
+| professional_match | score=**80.0**，evidence=`超声波雷达与毫米波雷达的台价标定`（len=16），字面子串命中 answer_id=**1** q_seq=**1** |
+| logic_structure | score=**87.5**，evidence=`先复现缺陷用系统日志和传感器回放数据`（len=18），字面子串命中 answer_id=**2** q_seq=**2** |
+| job_competence | score=**89.0**，evidence=`坚持功能安全底线组织跨部门风险评审`（len=18），字面子串命中 answer_id=**6** q_seq=**5**（追问） |
+| expression_fluency | score=**97.0**（确定性声学；evidence=null）；语速205字/分、停顿1.1次/分、填充词0.0个/分；样本含真实 duration_s/wpm/pause_cnt/filler_cnt（8 条） |
+| overall | **88.4** |
+| 落库答案 CJK–CJK 间空格 | **无**（8/8） |
+| P8 | **【通过】** |
+| SCORING_VERSION | 验收后启用 **`"v1"`**（闸门会话报告当时仍为 NULL，属闸门前样本，**不回填**） |
+
+### 代码与测试
+
+- `server/services/scoring.py`：`SCORING_VERSION="v1"`（仅改常量；未改算法/prompt/evidence/双评）
+- 自动化：新报告 v1、legacy NULL 不回填、history 原样、trend overall 对 legacy/v1 不可比、前端 cohort 拆线、evidence 字面规则、input_mode 隔离不回归
+- 受控音频 / 临时 DB / 结果 JSON：**不入库**；验收后清理，不以 `.gitignore` 掩盖未跟踪目录
+
+### 门禁（P8 收尾重跑）
+
+| 检查 | 退出码 |
+| --- | --- |
+| 全量 pytest | 0（86 passed, 2 skipped） |
+| `web/npm test` | 0（59 pass） |
+| `npm run typecheck` | 0 |
+| `npm run build` | 0 |
+| `git diff --check` | 0 |
+
+### 宣称纪律
+
+本轮为受控合成中文 WebM 技术闸门，**不得宣称真人语音验收**。**未合入 main**。

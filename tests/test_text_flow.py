@@ -66,7 +66,7 @@ def test_happy_path_full_text_interview():
     client = TestClient(app)
     
     # 1. 创建会话 POST /api/sessions
-    resp = client.post("/api/sessions", json={"job_id": 1})
+    resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
     assert resp.status_code == 200
     data = resp.json()
     assert "sid" in data
@@ -151,6 +151,7 @@ def test_happy_path_full_text_interview():
         "concerns": ["需加强自动化脚本"],
         "improvement": ["建议学习CAPL"],
         "overall": 84.7,
+        "scoring_version": "v1",
     }
 
     with patch("server.services.orchestrator.evaluate_followup", AsyncMock(return_value=None)), \
@@ -178,12 +179,16 @@ def test_happy_path_full_text_interview():
     assert rep_data["dimensions"]["professional_match"]["score"] == 88.0
     assert rep_data["highlights"] == ["总线分析能力强"]
 
+    with SessionLocal() as db:
+        stored = db.query(Report).filter(Report.id == report_id).one()
+        assert stored.scoring_version == "v1"
+
 
 @pytest.mark.anyio
 async def test_concurrency_scenario_1_a_processing_b_returns_409():
     """场景 1：A 处理中，B 提交返回 409 ANSWER_IN_PROGRESS"""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/sessions", json={"job_id": 1})
+        resp = await client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         a_entered = asyncio.Event()
@@ -215,7 +220,7 @@ async def test_concurrency_scenario_1_a_processing_b_returns_409():
 async def test_concurrency_scenario_2_a_expired_b_takes_over_a_late_commit_rolled_back():
     """场景 2：A 过期，B 接管。A 迟到的写入失败（回滚，不污染 DB）"""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/sessions", json={"job_id": 1})
+        resp = await client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         a_entered = asyncio.Event()
@@ -260,7 +265,7 @@ async def test_concurrency_scenario_2_a_expired_b_takes_over_a_late_commit_rolle
 async def test_concurrency_scenario_3_a_late_exception_does_not_unlock_b():
     """场景 3：A 迟到的异常清理不释放 B 的有效租约"""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/sessions", json={"job_id": 1})
+        resp = await client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         a_entered = asyncio.Event()
@@ -319,7 +324,7 @@ async def test_concurrency_scenario_3_a_late_exception_does_not_unlock_b():
 def test_concurrency_scenario_4_crash_recovery_expired_lease_taken_over():
     """场景 4：崩溃恢复（后续请求成功接管过期租约）"""
     client = TestClient(app)
-    resp = client.post("/api/sessions", json={"job_id": 1})
+    resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
     sid = resp.json()["sid"]
 
     # 模拟系统崩溃硬重启后遗留的状态
@@ -345,7 +350,7 @@ def test_concurrency_scenario_4_crash_recovery_expired_lease_taken_over():
 def test_concurrency_scenario_5_scoring_503_rollback_and_retry():
     """场景 5：评分 503 失败后状态正确回滚，后续提交可重试"""
     client = TestClient(app)
-    resp = client.post("/api/sessions", json={"job_id": 1})
+    resp = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
     sid = resp.json()["sid"]
 
     # 将进度调整到最后一题 (seq=6)
@@ -385,6 +390,7 @@ def test_concurrency_scenario_5_scoring_503_rollback_and_retry():
         "concerns": [],
         "improvement": ["继续保持"],
         "overall": 83.3,
+        "scoring_version": "v1",
     }
     with patch("server.services.scoring.score_interview", AsyncMock(return_value=mock_rep)):
         retry_resp = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "第6题重试作答"})
@@ -424,7 +430,7 @@ def test_api_error_codes():
     client = TestClient(app)
 
     # 1. 404 JOB_NOT_FOUND
-    r = client.post("/api/sessions", json={"job_id": 99999})
+    r = client.post("/api/sessions", json={"job_id": 99999, "user_id": 1, "mode": "毕业生"})
     assert r.status_code == 404
     assert r.json()["detail"]["code"] == "JOB_NOT_FOUND"
 
@@ -434,7 +440,7 @@ def test_api_error_codes():
     assert r.json()["detail"]["code"] == "SESSION_NOT_FOUND"
 
     # 3. 404 REPORT_NOT_FOUND (会话存在但尚未生成报告)
-    sess_r = client.post("/api/sessions", json={"job_id": 1})
+    sess_r = client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
     sid = sess_r.json()["sid"]
     rep_r = client.get(f"/api/reports/{sid}")
     assert rep_r.status_code == 404
@@ -519,7 +525,7 @@ def test_database_schema_upgrade_lifecycle(tmp_path):
 async def test_heartbeat_lease_renewal_and_cancellation():
     """测试阶段 2 心跳定期续租与所有权被盗后即时中止"""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/sessions", json={"job_id": 1})
+        resp = await client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         # 配置较短的心跳与租约
@@ -567,7 +573,7 @@ async def test_heartbeat_lease_renewal_and_cancellation():
 async def test_concurrency_stolen_lease_cancels_business_task_without_releasing_barrier():
     """复现阻断 3：失去所有权时竞争取消业务任务；证明无需释放 mock 屏障，旧请求就能退出"""
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/api/sessions", json={"job_id": 1})
+        resp = await client.post("/api/sessions", json={"job_id": 1, "user_id": 1, "mode": "毕业生"})
         sid = resp.json()["sid"]
 
         # 配置极短心跳

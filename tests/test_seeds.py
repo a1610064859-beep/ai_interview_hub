@@ -9,11 +9,11 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.import_seeds import import_seeds
+from scripts.import_seeds import import_seeds, SeedStudentConflictError
 from server.api.jobs import get_db
 from server.db import Base
 from server.main import app
-from server.models import Job, Question
+from server.models import Job, Question, User
 
 
 @pytest.fixture
@@ -143,4 +143,28 @@ def test_get_job_questions_invalid_id(client):
     # 非法非数字字符串
     res_str = client.get("/api/jobs/not-an-id/questions")
     assert res_str.status_code == 422
+
+
+# 7. 种子学生幂等与冲突即失败
+def test_seed_students_idempotent_and_conflict(test_db):
+    db, _ = test_db
+    seed_path = Path(__file__).resolve().parent.parent / "data" / "jobs_seed.json"
+
+    stats1 = import_seeds(seed_path=seed_path, db=db)
+    assert stats1["students_created"] == 2
+    u3 = db.query(User).filter(User.id == 3).one()
+    u4 = db.query(User).filter(User.id == 4).one()
+    assert u3.name_masked == "王*明"
+    assert u4.name_masked == "李*华"
+
+    stats2 = import_seeds(seed_path=seed_path, db=db)
+    assert stats2["students_created"] == 0
+    assert stats2["students_existing"] == 2
+
+    u3.name_masked = "冲突*名"
+    db.commit()
+    with pytest.raises(SeedStudentConflictError):
+        import_seeds(seed_path=seed_path, db=db)
+    db.refresh(u3)
+    assert u3.name_masked == "冲突*名"
 

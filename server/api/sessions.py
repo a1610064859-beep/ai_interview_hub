@@ -7,7 +7,7 @@ import tempfile
 from typing import Annotated
 from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Path, UploadFile
-from sqlalchemy import and_, or_, update
+from sqlalchemy import and_, func, or_, update
 
 from server.config import settings
 from server.db import SessionLocal
@@ -34,6 +34,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 
+def _release_lease(db, sid: int, token: str) -> None:
+    db.execute(
+        update(Session)
+        .where(Session.id == sid, Session.lease_token == token)
+        .values(status="active", lease_token=None, lease_expires_at=None)
+    )
+    db.commit()
+
+
+def _enforce_input_mode(db, sess: Session, sid: int, token: str, expected: str) -> None:
+    """会话已锁定输入模式且与当前端点不一致 → 409，释放租约，不推进。"""
+    if sess.input_mode is None:
+        return
+    if sess.input_mode == expected:
+        return
+    _release_lease(db, sid, token)
+    label = "文本" if sess.input_mode == "text" else "语音"
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "INPUT_MODE_MISMATCH",
+            "message": f"该会话已以{label}模式进行，禁止混用输入模式",
+        },
+    )
+
+
 @router.post("", response_model=SessionCreateResponse)
 async def create_session(req: SessionCreateRequest):
     with SessionLocal() as db:
@@ -44,18 +70,12 @@ async def create_session(req: SessionCreateRequest):
                 detail={"code": "JOB_NOT_FOUND", "message": "岗位不存在"},
             )
 
-        # 确保默认学生用户存在
-        user = db.query(User).filter(User.id == 1).first()
-        if not user:
-            user = User(
-                id=1,
-                role="student",
-                name_masked="演示学生",
-                major="车辆工程",
-                grade="大三",
+        user = db.query(User).filter(User.id == req.user_id).first()
+        if not user or user.role != "student":
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "USER_NOT_FOUND", "message": "学生档案不存在"},
             )
-            db.add(user)
-            db.commit()
 
         # 读取岗位第一题
         questions = (
@@ -80,14 +100,15 @@ async def create_session(req: SessionCreateRequest):
         }
 
         session = Session(
-            user_id=1,
+            user_id=req.user_id,
             job_id=req.job_id,
-            mode="毕业生",
+            mode=req.mode,
             started_at=datetime.utcnow(),
             status="active",
             pending_question_json=pending_q,
             lease_token=None,
             lease_expires_at=None,
+            input_mode=None,
         )
         db.add(session)
         db.commit()
@@ -188,6 +209,8 @@ async def submit_text_answer(
                     "message": "该会话缺少待答题目快照，请重新开始新面试",
                 },
             )
+
+        _enforce_input_mode(db, sess, sid, my_token, "text")
 
         job = db.query(Job).filter(Job.id == sess.job_id).first()
         questions = (
@@ -387,7 +410,7 @@ async def submit_text_answer(
         except asyncio.CancelledError:
             pass
 
-    # 事务 3：所有权校验与原子落库
+    # 事务 3：所有权校验与原子落库（含首次 input_mode=text）
     with SessionLocal() as db:
         res = db.execute(
             update(Session)
@@ -397,6 +420,7 @@ async def submit_text_answer(
                 pending_question_json=next_q,
                 lease_token=None,
                 lease_expires_at=None,
+                input_mode=func.coalesce(Session.input_mode, "text"),
             )
         )
         if res.rowcount == 0:
@@ -432,6 +456,7 @@ async def submit_text_answer(
                 concerns_json=report_data["concerns"],
                 improvement_json=report_data["improvement"],
                 overall=report_data["overall"],
+                scoring_version=report_data.get("scoring_version"),
             )
             db.add(new_report)
 
@@ -562,6 +587,8 @@ async def submit_audio_answer(
                     status_code=409,
                     detail={"code": "SESSION_RESET_REQUIRED", "message": "该会话缺少待答题目快照，请重新开始新面试"},
                 )
+
+            _enforce_input_mode(db, sess, sid, my_token, "voice")
 
             job = db.query(Job).filter(Job.id == sess.job_id).first()
             questions = (
@@ -814,7 +841,7 @@ async def submit_audio_answer(
             except asyncio.CancelledError:
                 pass
 
-        # 事务 3：所有权校验与原子落库（失败路径不会到达此处）
+        # 事务 3：所有权校验与原子落库（含首次 input_mode=voice）
         with SessionLocal() as db:
             res = db.execute(
                 update(Session)
@@ -824,6 +851,7 @@ async def submit_audio_answer(
                     pending_question_json=next_q,
                     lease_token=None,
                     lease_expires_at=None,
+                    input_mode=func.coalesce(Session.input_mode, "voice"),
                 )
             )
             if res.rowcount == 0:
@@ -856,6 +884,7 @@ async def submit_audio_answer(
                     concerns_json=report_data["concerns"],
                     improvement_json=report_data["improvement"],
                     overall=report_data["overall"],
+                    scoring_version=report_data.get("scoring_version"),
                 )
                 db.add(new_report)
 

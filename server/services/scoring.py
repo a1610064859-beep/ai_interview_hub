@@ -8,6 +8,10 @@ from server.services.llm import chat_json, LLMError
 
 logger = logging.getLogger(__name__)
 
+# P8 已验收（ASR CJK 规范化后语音会话内容维 evidence 字面命中）：新报告写 scoring_version="v1"。
+# 存量 NULL = legacy，禁止自动回填；测试夹具可显式写入其他版本字符串。
+SCORING_VERSION: str | None = "v1"
+
 
 class ScoringUnavailableError(Exception):
     """评分基础设施（主备模型链）全部不可用"""
@@ -302,4 +306,5 @@ async def score_interview(
         "concerns": concerns,
         "improvement": improvement,
         "overall": overall,
+        "scoring_version": SCORING_VERSION,
     }
