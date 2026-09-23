@@ -82,9 +82,10 @@ class LLMClient:
 
                 client = None
                 try:
-                    # Reserve time for fallback; SDK retries must not multiply this budget.
-                    remaining = max(0.001, deadline - time.monotonic())
-                    attempt_timeout = remaining / (len(chain) - index)
+                    # 单次尝试用满剩余预算，由外层 asyncio.timeout 统一裁剪；
+                    # 等分策略会把慢模型的单次尝试砍半（评分 30s÷2=15s < 实际耗时），
+                    # fallback 机会由快速失败（连接拒绝/4xx）保留，而非预留时间。
+                    attempt_timeout = max(0.001, deadline - time.monotonic())
                     client = AsyncOpenAI(base_url=url, api_key=key, max_retries=0)
                     resp = await asyncio.wait_for(client.chat.completions.create(
                         model=model,

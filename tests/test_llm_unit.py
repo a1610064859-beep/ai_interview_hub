@@ -194,13 +194,13 @@ def test_timeout_forwarded_and_stage_selection(monkeypatch):
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: TimeoutRecorder(**x))
     client = LLMClient(make_settings(llm_orchestration_timeout_s=6.0, llm_scoring_timeout_s=60.0))
 
-    # 为 fallback 预留一半阶段预算；SDK 本身禁止隐式重试
+    # 单次请求使用剩余阶段预算；外层 deadline 负责总超时，SDK 禁止隐式重试
     asyncio.run(client.chat_json("orchestration", [], Out))
-    assert seen_timeouts["local_m"] == pytest.approx(3.0, abs=0.1)
+    assert seen_timeouts["local_m"] == pytest.approx(6.0, abs=0.1)
 
-    # scoring 阶段应传递 60.0s
+    # scoring 阶段应传递完整的 60.0s 预算
     asyncio.run(client.chat_json("scoring", [], Out))
-    assert seen_timeouts["flagship_m"] == pytest.approx(30.0, abs=0.1)
+    assert seen_timeouts["flagship_m"] == pytest.approx(60.0, abs=0.1)
 
 
 # E. 全链失败产生明确 LLMError
