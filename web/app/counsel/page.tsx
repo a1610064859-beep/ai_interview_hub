@@ -33,9 +33,29 @@ export default function CounselPage() {
     if (!student || busy) return;
     setBusy(true); setMessage(null); setResult(null);
     try {
-      const response = await fetch("/api/counsel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ major: student.major, grade: student.grade, interests: interests.split(/[，,]/).map((x) => x.trim()).filter(Boolean) }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.detail?.message ?? `咨询失败（HTTP ${response.status}）`);
+      const response = await fetch("/api/counsel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          major: student.major,
+          grade: student.grade,
+          interests: interests.split(/[，,]/).map((x) => x.trim()).filter(Boolean),
+        }),
+      });
+      const raw = await response.text();
+      let body: unknown = null;
+      try {
+        body = raw ? JSON.parse(raw) : null;
+      } catch {
+        throw new Error(`咨询失败（HTTP ${response.status}）：服务返回非 JSON`);
+      }
+      const detail =
+        body && typeof body === "object" && body !== null && "detail" in body
+          ? (body as { detail?: { message?: string } }).detail
+          : undefined;
+      if (!response.ok) {
+        throw new Error(detail?.message ?? `咨询失败（HTTP ${response.status}）`);
+      }
       setResult(body as CounselResult);
     } catch (error) { setMessage(error instanceof Error ? error.message : "咨询失败"); }
     finally { setBusy(false); }
