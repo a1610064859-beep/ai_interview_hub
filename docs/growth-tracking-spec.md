@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 状态 | **草案 v2，按 Astra 审查意见修订，待队长批准**（本文档只含规格与审批申请，未改任何生产代码） |
+| 状态 | **已批准并实施（合入 4cb6da5，2026-09-23）** |
 | 修订记录 | v1=`f707b16` 初稿；v2=①存量 NULL 不再默认解释为 text/v1，改判 legacy 不可比；②会话输入模式一致性约束（409 INPUT_MODE_MISMATCH）；③`mode` 改为请求体显式必填；④A16 测试改为替换 chat_json 断言；⑤种子学生档案冲突即失败 |
 | 任务 | AGENTS.md §10.2 [T7-G0]，分支 `feature/T7-growth-spec`，worktree `E:\ai_interview_hub_growth_spec` |
 | 起点 | 提交 `b79b15a`（= `codex/growth-tracking-plan`，已核实两者同一提交） |

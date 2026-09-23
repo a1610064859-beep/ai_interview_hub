@@ -6,7 +6,7 @@
 | 分支 / worktree | `feature/T5-asr-spec` / `E:\ai_interview_hub_t5_spec` |
 | 基线 | main `fdd74a1`（= T5-P0 `1788674` 合入后的 main；main 同期已通过验收合入 T4 TTS 预取 `757a62f`） |
 | 前置输入 | `docs/asr-preflight.md`（T5-P0 实测：ffmpeg 8.1 就绪；系统 Python 3.11.9 可用；funasr/torch 全缺；RTX 3070 Ti 8GB；C 盘余 14G） |
-| 状态 | **待队长审批**。§5 API 细则、§1 依赖、§4 配置键、§6 文件边界均"批准后才可施工" |
+| 状态 | **已批准并实施（合入 4cb6da5，2026-09-23）** |
 | 修订记录 | v1=`d677712` 初稿；v2=按 Astra 审查修订：①输入内容损坏（含截断/内部损坏）统一 422 AUDIO_INVALID，503 仅限环境缺失败；②删除 ASR_DISABLED，关闭 ASR 统一 503 ASR_UNAVAILABLE；③ASR_MODEL_NAME/ASR_MODEL_CACHE_DIR 改必填无默认；④ASR_PROVIDER 锁定 funasr，讯飞登记为后续缺口；⑤Dockerfile 改列待批扩界；⑥删除 prepare_asr_model.py 申请；⑦CUDA 失败自动回退 CPU 定稿；⑧验收 F 更名"并发重复请求不重复推进"；v3=错误分类弃用 stderr 文案匹配，改阶段判定（魔数初筛→ffprobe 解析→ffmpeg 转码→可执行性），stderr 仅作日志诊断，验收 D 增至三类损坏样本 |
 
 **标记约定**：`[已验证]`=官方包元数据/官方索引/本机实测取证；`[未验证]`=未实测、禁止据此宣称；`[待批]`=本规格申请、队长批准前不得实施。

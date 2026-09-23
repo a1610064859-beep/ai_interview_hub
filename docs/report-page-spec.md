@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 状态 | **草案 v1，待指挥官 Astra 审查与队长批准** |
+| 状态 | **已批准并实施（合入 4cb6da5，2026-09-23）** |
 | 任务代号 | [T7-R0] 报告页数据映射与视觉实施规格 |
 | 执行分支 | `feature/T7-report-spec` |
 | 独立 Worktree | `E:\ai_interview_hub_report_spec` |
