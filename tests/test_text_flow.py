@@ -151,6 +151,7 @@ def test_happy_path_full_text_interview():
         "concerns": ["需加强自动化脚本"],
         "improvement": ["建议学习CAPL"],
         "overall": 84.7,
+        "scoring_version": "v1",
     }
 
     with patch("server.services.orchestrator.evaluate_followup", AsyncMock(return_value=None)), \
@@ -177,6 +178,10 @@ def test_happy_path_full_text_interview():
     assert rep_data["dimensions"]["expression_fluency"]["reason"] == "文本模式，未评估语音流畅度"
     assert rep_data["dimensions"]["professional_match"]["score"] == 88.0
     assert rep_data["highlights"] == ["总线分析能力强"]
+
+    with SessionLocal() as db:
+        stored = db.query(Report).filter(Report.id == report_id).one()
+        assert stored.scoring_version == "v1"
 
 
 @pytest.mark.anyio
@@ -385,6 +390,7 @@ def test_concurrency_scenario_5_scoring_503_rollback_and_retry():
         "concerns": [],
         "improvement": ["继续保持"],
         "overall": 83.3,
+        "scoring_version": "v1",
     }
     with patch("server.services.scoring.score_interview", AsyncMock(return_value=mock_rep)):
         retry_resp = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "第6题重试作答"})

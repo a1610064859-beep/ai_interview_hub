@@ -8,9 +8,9 @@ from server.services.llm import chat_json, LLMError
 
 logger = logging.getLogger(__name__)
 
-# P8：ASR CJK 字间空格规范化验收并进入 integration 后，新报告才写 scoring_version="v1"。
-# 此前保持 None，禁止把当前评分行为标为 v1；测试可用夹具显式写入版本字符串。
-SCORING_VERSION: str | None = None
+# P8 已验收（ASR CJK 规范化后语音会话内容维 evidence 字面命中）：新报告写 scoring_version="v1"。
+# 存量 NULL = legacy，禁止自动回填；测试夹具可显式写入其他版本字符串。
+SCORING_VERSION: str | None = "v1"
 
 
 class ScoringUnavailableError(Exception):

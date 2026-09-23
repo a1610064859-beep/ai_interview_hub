@@ -376,3 +376,31 @@
 | `git diff --check` / `main...HEAD` | 0 |
 
 不合入 main；交 Astra / 队长审查后另票合 main。
+
+## T7-G1-P8 评分版本闸门验收
+
+范围：在 `feature/T7-growth-integration@c1b395d` 上，用 ASR CJK 规范化后的语音链路新建完整语音会话；**不改 sid=5**（本 worktree 演示库无 sid=5；验收库 `data/p8_gate.db` 独立）。音频为 **受控真实中文 WebM**（Windows SAPI Huihui → ffmpeg opus），**非真人验收**，仅作技术闸门。
+
+### 语音闸门结果
+
+| 项 | 值 |
+| --- | --- |
+| 新 sid / report_id | **1 / 1**（库 `data/p8_gate.db`） |
+| 语音提交次数 | **8**（主问 6 + 追问 2；全部 `POST .../answers`） |
+| professional_match | score=80.0，evidence=`超声波雷达与毫米波雷达的台价标定`，字面子串 **通过** |
+| logic_structure | score=87.5，evidence=`先复现缺陷用系统日志和传感器回放数据`，字面子串 **通过** |
+| job_competence | score=89.0，evidence=`坚持功能安全底线组织跨部门风险评`（落库完整子串），字面子串 **通过** |
+| expression_fluency | score=97.0（真实声学；evidence=null） |
+| overall | 88.4 |
+| 落库答案 CJK 间空格 | **无** |
+| P8 | **通过** |
+| SCORING_VERSION | 验收后启用 `"v1"`（此前该会话报告仍为 NULL，属闸门前样本，不回填） |
+
+### 代码与测试
+
+- `server/services/scoring.py`：`SCORING_VERSION="v1"`
+- 测试：新报告 v1、legacy NULL 不回填、trend overall 对 legacy/v1 不可比；前端 cohort 拆线既有用例保留
+
+### 宣称纪律
+
+本轮为受控合成中文 WebM 技术闸门，**不得宣称真人语音验收**。

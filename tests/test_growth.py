@@ -646,15 +646,15 @@ def test_seed_students_idempotent_and_conflict():
         assert u3.name_masked == "冲突*名"
 
 
-def test_integration_stub_matrix_and_p8_closed():
-    """T7-G1-INTEGRATION 联调 stub：契约形状 + 隔离矩阵 + P8 仍关闭。
+def test_integration_stub_matrix_and_p8_v1_enabled():
+    """T7-G1-INTEGRATION 联调 stub：契约形状 + 隔离矩阵 + P8 已启用 v1。
 
     覆盖：两学生/两岗位、0/1/3 次、跨学生/跨岗位隔离、text/voice/legacy 不可比、
-    创建三字段、双向 INPUT_MODE_MISMATCH；不启用 SCORING_VERSION=v1。
+    创建三字段、双向 INPUT_MODE_MISMATCH；SCORING_VERSION=v1（存量 NULL 仍不可比）。
     """
     from server.services.scoring import SCORING_VERSION
 
-    assert SCORING_VERSION is None
+    assert SCORING_VERSION == "v1"
 
     client = TestClient(app)
     assert client.post("/api/sessions", json={"job_id": 1}).status_code == 422
@@ -777,3 +777,98 @@ def test_integration_stub_matrix_and_p8_closed():
     )
     legacy = client.get("/api/growth/3/trend", params={"job_id": 1}).json()
     assert "SCORING_VERSION_UNKNOWN" in legacy["overall_comparison"]["reasons"]
+
+
+def test_p8_v1_new_report_and_legacy_null_not_backfilled_no_cross_link():
+    """P8：新报告写 v1；存量 scoring_version=NULL 不回填；趋势不跨 legacy/v1 可比连线。"""
+    from server.services.scoring import SCORING_VERSION
+
+    assert SCORING_VERSION == "v1"
+    client = TestClient(app)
+    base = datetime(2026, 9, 22, 8, 0, 0)
+
+    legacy_sid, legacy_rid = _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base,
+        dimensions=_dims(70.0, 70.0, None, 70.0),
+        input_mode="text",
+        scoring_version=None,
+    )
+    v1_sid, v1_rid = _insert_completed(
+        user_id=3,
+        job_id=1,
+        started_at=base + timedelta(hours=1),
+        dimensions=_dims(72.0, 72.0, None, 72.0),
+        input_mode="text",
+        scoring_version="v1",
+    )
+
+    with SessionLocal() as db:
+        legacy_row = db.query(Report).filter(Report.id == legacy_rid).one()
+        v1_row = db.query(Report).filter(Report.id == v1_rid).one()
+        assert legacy_row.scoring_version is None
+        assert v1_row.scoring_version == "v1"
+        # 再读一次确认未因后续写入被回填
+        db.expire_all()
+        assert db.query(Report).filter(Report.id == legacy_rid).one().scoring_version is None
+
+    hist = client.get("/api/growth/3/history", params={"job_id": 1}).json()
+    assert hist["records"][0]["session_id"] == legacy_sid
+    assert hist["records"][0]["scoring_version"] is None
+    assert hist["records"][1]["session_id"] == v1_sid
+    assert hist["records"][1]["scoring_version"] == "v1"
+
+    trend = client.get("/api/growth/3/trend", params={"job_id": 1}).json()
+    assert trend["sessions_count"] == 2
+    assert trend["overall_comparison"]["comparable"] is False
+    assert "SCORING_VERSION_UNKNOWN" in trend["overall_comparison"]["reasons"]
+    assert trend["overall_comparison"]["delta"] is None
+    # 折线连线由前端按 (input_mode, scoring_version) cohort 拆系列；后端 overall 不可比即可。
+
+    # 生产路径：score_interview 返回值经文本终题落库为 v1（mock 透传常量）
+    create = client.post(
+        "/api/sessions",
+        json={"job_id": 1, "user_id": 3, "mode": "毕业生"},
+    )
+    assert create.status_code == 200
+    sid = create.json()["sid"]
+    mock_rep = {
+        "dimensions": {
+            "professional_match": {"score": 80.0, "evidence": "使用CANoe", "reason": "ok"},
+            "logic_structure": {"score": 80.0, "evidence": "使用CANoe", "reason": "ok"},
+            "expression_fluency": {
+                "score": None,
+                "evidence": None,
+                "reason": "文本模式，未评估语音流畅度",
+            },
+            "job_competence": {"score": 80.0, "evidence": "使用CANoe", "reason": "ok"},
+        },
+        "highlights": [],
+        "concerns": [],
+        "improvement": [],
+        "overall": 80.0,
+        "scoring_version": SCORING_VERSION,
+    }
+
+    with patch(
+        "server.services.orchestrator.evaluate_followup", AsyncMock(return_value=None)
+    ), patch(
+        "server.services.scoring.score_interview", AsyncMock(return_value=mock_rep)
+    ):
+        for _ in range(6):
+            resp = client.post(
+                f"/api/sessions/{sid}/answers/text",
+                json={"answer_text": "我在测试中使用CANoe分析总线报文并推动闭环。"},
+            )
+            assert resp.status_code == 200
+            if resp.json()["type"] == "done":
+                break
+        else:
+            raise AssertionError("未完成文本面试")
+
+    with SessionLocal() as db:
+        new_report = db.query(Report).filter(Report.session_id == sid).one()
+        assert new_report.scoring_version == "v1"
+        # 存量 legacy 仍为 NULL
+        assert db.query(Report).filter(Report.id == legacy_rid).one().scoring_version is None
