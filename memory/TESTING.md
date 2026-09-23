@@ -517,3 +517,10 @@
 - **M2 证据合入**：feature/M2-final-acceptance 的 [M2-FINAL] 终验记录（9/22）合入本文件。**状态更新**：其记录的最终提交 ECONNRESET 阻断根因（Next 代理默认 30s < ASR 120s）已在 3e60feb 修复（代理 360s）并复核；**M2 正式关闭仍差一项：真人麦克风整场复验（最终提交自动跳转 + 内容维度双评），留人工验收**。
 - **T-SEED 演示库重建**：备份 data/interview.db.bak-20260923（legacy 模式）后重建；核验 2 岗位（智驾测试/三电系统测试）12 题 + 种子学生 id=3/4（王*明/李*华），legacy user id=1 与旧会话清除。
 - **已知遗留**：tests/test_tts.py 夹具仍含真实库清表代码（现被 conftest 兜住，待后续收口）；T8 分支预审结论"可合入"（合入后须重跑 import_seeds.py 迁移 dims_json 形状）。
+
+## T8 企业端合入（2026-09-23）
+
+- **预审**（只读评审 feature/T8-recruiter）：结论"可合入"。同源闭环（Session⋈Report⋈User 联查、report_path 可追溯原报告、无独立静态榜、候选路径零 LLM）、每学生每岗一条取最近合格报告（缺维资格 min3，不合格回退上一合格）、缺维不补零重归一化（Decimal）、口径隔离（input_mode+scoring_version 成对过滤，422 COHORT_PAIR_REQUIRED）、权重和=1 校验失败 503、jd_parse 草案不写库（三重不变量保障）+ LLM 失败 503、无新依赖、无新表。
+- **合入**：merge 干净无冲突（+1892 行，11 文件）。
+- **合入后动作**：重跑 `scripts/import_seeds.py` 完成 dims_json 形状迁移（jobs_updated=2，旧数组→{labels,weights}）；全量后端 **106 passed, 2 skipped**（含 test_recruiter.py 19 项）；前端 build 通过（/recruiter 5.8kB）、61 项测试通过。
+- **待人工**：浏览器走查"JD→题库→学生训练→报告→企业排序"全链路（自动化已覆盖同源/排序/隔离逻辑），纳入 M3 冻结验收（阶段 5）。
