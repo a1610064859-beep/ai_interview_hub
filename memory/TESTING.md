@@ -506,3 +506,14 @@
 | 18080 | real FastAPI | 证据保存后清理 → NO_LISTENER |
 | 34725 | Next real | 证据保存后清理 → NO_LISTENER |
 
+
+## T0 后勤轮（2026-09-23）：T6修复复核、测试隔离与稳健性小修
+
+- **复核合入另一工作线 T6 修复**（3e60feb，快进合入 main）：全量后端复测 **89 passed, 2 skipped**；前端 61 项测试、typecheck、build 通过。`test_llm_integration` 因本机 Ollama 离线失败（环境依赖，超时预算机制正常生效），非代码缺陷。
+- **T-ISO 测试库隔离**：新增 `tests/conftest.py`（顶层注入临时 SQLite + TTS/usage日志/ASR临时目录），test_text_flow/test_audio_flow/test_growth 清表逻辑改为临时库重建。验证：子集 46 passed；**全量回归前后 data/interview.db sha256 一致（8d9dd204…）**，pytest 不再触碰演示库。
+- **T-ROB 稳健性**：db.py SQLite WAL+busy_timeout+connect timeout（按方言判断，兼容 Postgres）；reports.py 按 id 降序取最新报告；sessions.py 两处续租失败改 logger.warning（控制流不变）。
+- **T-FE1 前端清理**：page.tsx 死导入删除、设备自检 `rec.stop()` 补 try/catch（失败释放锁回 idle）、不可达 "playing" 分支删除；61 项测试 + typecheck + build 全过。
+- **T-DOC**：三份规格状态头回写"已批准并实施（合入 4cb6da5）"；删除根目录 0 字节 test_edge.mp3。
+- **M2 证据合入**：feature/M2-final-acceptance 的 [M2-FINAL] 终验记录（9/22）合入本文件。**状态更新**：其记录的最终提交 ECONNRESET 阻断根因（Next 代理默认 30s < ASR 120s）已在 3e60feb 修复（代理 360s）并复核；**M2 正式关闭仍差一项：真人麦克风整场复验（最终提交自动跳转 + 内容维度双评），留人工验收**。
+- **T-SEED 演示库重建**：备份 data/interview.db.bak-20260923（legacy 模式）后重建；核验 2 岗位（智驾测试/三电系统测试）12 题 + 种子学生 id=3/4（王*明/李*华），legacy user id=1 与旧会话清除。
+- **已知遗留**：tests/test_tts.py 夹具仍含真实库清表代码（现被 conftest 兜住，待后续收口）；T8 分支预审结论"可合入"（合入后须重跑 import_seeds.py 迁移 dims_json 形状）。
