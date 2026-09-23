@@ -132,6 +132,7 @@ export default function HomePage() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [audienceMode, setAudienceMode] = useState<AudienceMode | null>("毕业生");
   const interviewIdentityRef = useRef<{ userId: number; jobId: number } | null>(null);
+  const counselDeepLinkHandledRef = useRef(false);
 
   function buildInterviewReportHref(sid: number): string {
     return resolveReportHref(sid, interviewIdentityRef.current);
@@ -176,6 +177,22 @@ export default function HomePage() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (view.phase !== "jobs" || view.mode !== "real" || counselDeepLinkHandledRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const userId = Number(params.get("user_id"));
+    const jobId = Number(params.get("job_id"));
+    if (params.get("mode") !== "新生" || !Number.isInteger(userId) || !Number.isInteger(jobId)) return;
+    const studentExists = students.some((student) => student.id === userId);
+    const job = view.jobs.find((item) => item.id === jobId);
+    if (!studentExists || !job) return;
+    counselDeepLinkHandledRef.current = true;
+    setSelectedUserId(userId);
+    setAudienceMode("新生");
+    createLock.current = true;
+    setView({ phase: "device_check", job, userId, audienceMode: "新生" });
+  }, [students, view]);
 
   // 组件卸载时释放录音、计时与报告恢复轮询
   useEffect(() => {
@@ -781,6 +798,9 @@ export default function HomePage() {
         <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">
           选择岗位，语音或文本作答，查看首题与进度。
         </p>
+        <a href="/counsel" className="mt-4 inline-block rounded-full border border-[#7eb6ff] px-4 py-2 text-sm text-[#7eb6ff]">
+          新生岗位路径
+        </a>
       </header>
 
       {view.phase === "config" ? <MessagePanel title="配置错误" message={view.message} /> : null}

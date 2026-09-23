@@ -143,3 +143,117 @@ class GrowthTrendResponse(BaseModel):
     points: list[GrowthTrendPoint]
     overall_comparison: OverallComparison
     dimension_changes: dict[str, DimensionChange | None]
+
+
+class CounselRequest(BaseModel):
+    major: str = Field(..., min_length=1, max_length=64)
+    grade: Literal["大一", "大二", "大三", "大四"]
+    interests: list[str] = Field(..., min_length=0, max_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("major")
+    @classmethod
+    def clean_major(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("major must not be blank")
+        return value
+
+    @field_validator("interests")
+    @classmethod
+    def clean_interests(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 32 for value in cleaned):
+            raise ValueError("each interest must contain 1-32 characters")
+        return cleaned
+
+
+class CounselJobMapItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_id: int = Field(..., ge=1)
+    family: str = Field(..., min_length=1, max_length=32)
+    title: str = Field(..., min_length=1, max_length=64)
+    chain_role: str = Field(..., min_length=1, max_length=128)
+    core_skills: list[str] = Field(..., min_length=1, max_length=12)
+    fit_summary: str = Field(..., min_length=1, max_length=200)
+
+    @field_validator("core_skills")
+    @classmethod
+    def clean_core_skills(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip() for v in values]
+        if any(not v or len(v) > 64 for v in cleaned):
+            raise ValueError("each core_skill must contain 1-64 characters")
+        return cleaned
+
+
+class CounselGapItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_id: int = Field(..., ge=1)
+    skill: str = Field(..., min_length=1, max_length=64)
+    current_hint: str = Field(..., min_length=1, max_length=200)
+    target_hint: str = Field(..., min_length=1, max_length=200)
+    suggested_action: str = Field(..., min_length=1, max_length=200)
+
+
+class CounselMilestone(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    term: str = Field(..., min_length=1, max_length=32)
+    items: list[str] = Field(..., min_length=1, max_length=8)
+
+    @field_validator("items")
+    @classmethod
+    def clean_items(cls, values: list[str]) -> list[str]:
+        cleaned = [v.strip() for v in values]
+        if any(not v or len(v) > 64 for v in cleaned):
+            raise ValueError("each milestone item must contain 1-64 characters")
+        return cleaned
+
+
+class CounselNextGrade(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    grade: Literal["大一", "大二", "大三", "大四"]
+    focus: str = Field(..., min_length=1, max_length=128)
+
+
+class CounselLearningPath(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    grade: Literal["大一", "大二", "大三", "大四"]
+    theme: str = Field(..., min_length=1, max_length=128)
+    milestones: list[CounselMilestone] = Field(..., min_length=0, max_length=8)
+    next_grades: list[CounselNextGrade] = Field(default_factory=list, max_length=4)
+
+
+class CounselTrainHint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_id: int = Field(..., ge=1)
+    mode: Literal["新生"]
+
+
+class CounselLlmResponse(BaseModel):
+    """LLM 仅允许受控措辞字段；学习路径一律由静态包构造，不接受 LLM 结构。"""
+
+    model_config = ConfigDict(extra="forbid")
+    recommended_job_id: int = Field(..., ge=1)
+    fit_summaries: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("fit_summaries")
+    @classmethod
+    def clean_fit_summaries(cls, values: dict[str, str]) -> dict[str, str]:
+        cleaned: dict[str, str] = {}
+        for key, value in values.items():
+            text = value.strip()
+            if not text:
+                continue
+            cleaned[str(key)] = text[:200]
+        return cleaned
+
+
+class CounselResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["新生"]
+    degraded: bool
+    job_map: list[CounselJobMapItem] = Field(..., min_length=2, max_length=2)
+    gaps: list[CounselGapItem] = Field(..., min_length=0, max_length=16)
+    learning_path: CounselLearningPath
+    recommended_job_id: int = Field(..., ge=1)
+    train_hint: CounselTrainHint
