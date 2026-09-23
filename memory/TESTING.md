@@ -426,3 +426,83 @@
 - 前端：80 项测试通过；typecheck 通过；生产 build 通过。启动预热实测 19.36 秒，`/api/asr/status` 返回 `ready=true,busy=false`。
 - 浏览器自动化因本地浏览器控制通道中断未完成最终截图；生产构建与 720p 布局压缩已验证到代码和构建层，仍需人工打开页面确认视觉位置。
 - 本轮仍为受控合成音频，不宣称真人麦克风验收。
+## [M2-FINAL] 语音闭环终验（2026-09-22）
+
+范围：关闭 M2 剩余两项——H 严格断网（含 HTTP 答题端点）与真人麦克风完整 6 题；默认不改生产代码。分支 `feature/M2-final-acceptance`（基于 `main`）。
+
+### H 严格断网（HTTP 端到端补强）——通过
+
+说明：在既有库级 H 证据之外，本轮用可恢复 socket 护栏 + 离线环境变量，对 `POST /api/sessions/{sid}/answers` 做端到端验收。隔离库 `E:\ai_hub_cache\m2_final_h\h_accept.db`（不改写验收判据所需的主库题库语义；主库另有并发干扰故改用隔离库落证）。证据文件未合入仓库。
+
+1. **缓存与工具**
+   - 模型缓存存在：`E:\ai_models\funasr\...\model.pt`
+   - 现有 `.venv`；未重新下载模型、未安装依赖
+   - 样本：SAPI 中文 → ffmpeg WebM/Opus（`h_zh.webm`，61557 bytes）；ffprobe：`codec_name=opus channels=1`（容器 48kHz，服务端再转 16k）
+2. **断网手段（可恢复）**
+   - 进程内拦截非 loopback `socket.create_connection` / `socket.connect` → `OSError(10051,[H断网拦截])`
+   - 允许 `127.0.0.1` / `::1` / `localhost`（不破坏本机前后端与本机 Ollama）
+   - `MODELSCOPE_OFFLINE=1`、`HF_HUB_OFFLINE=1`、`TRANSFORMERS_OFFLINE=1`、`TTS_ENABLED=false`
+   - 外呼探针：`1.1.1.1:443` → blocked
+3. **HTTP 链路**
+   - uvicorn `127.0.0.1:18082` + 上述护栏
+   - `POST /api/sessions` → sid=1，`audio_url=null`（本轮关闭 TTS）
+   - 主答 WebM：`HTTP 200`，`type=followup`，seq=1（约 31.4s，含冷加载）
+   - 追问 WebM：`HTTP 200`，`type=next`，seq=2（约 0.73s）→ **followup→next**
+4. **ASR / 落库**
+
+| id | q_seq | is_followup | duration_s | wpm | pause_cnt | filler_cnt | answer_text（节选） |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 0 | 10.3 | 139.8 | 1 | 0 | 我们使用co e进行智能汽车总线通信测试和故障注入 |
+| 2 | 1 | 1 | 10.3 | 139.8 | 0 | 0 | 同上（CJK 非空） |
+
+   - FunASR 日志加载本地 `E:\ai_models\funasr\...\model.pt`，`All keys matched successfully`
+   - ModelScope 仍打印 “Downloading 13 files”，但在护栏下约 1s 完成，随后只读本地 ckpt；云端 LLM 在护栏下重试失败后静默降级（符合追问失败→下一题）
+5. **恢复**
+   - 结束 `18082` 进程 → `18082=NO_LISTENER`
+   - 主机外网探针 `https://www.baidu.com` → `NET_RESTORE=ok status=200`
+
+### 真人麦克风语音与声学验收（sid=5）——后端链路通过 / 前端闭环未通过
+
+说明：真人自然口语 + 浏览器 MediaRecorder；**禁止再向 sid=5 提交**。本场可作真人语音与声学量化证据；因最终提交前端 500 未自动跳转报告页，**不能替代完整流程验收**，**M2 暂不关闭**。
+
+1. **流程观测**
+   - 岗位：智驾测试；全程语音（12 条：6 主问 + 6 追问，均有 `duration_s/wpm/pause_cnt/filler_cnt`）
+   - 服务：FastAPI `:18080` + Next `:34725`（real）
+   - 最终追问提交：前端显示 `语音提交失败（HTTP 500）。未推进题目。未自动重试。`
+   - Next 原文：`Failed to proxy http://127.0.0.1:18080/api/sessions/5/answers [Error: socket hang up] { code: 'ECONNRESET' }`
+   - 后端随后完成：`status=completed`，`POST .../answers` 最终 200；中间有一次 409（租约占用下的重试）
+2. **报告核验（人工 + API）**
+   - `GET /api/reports/5` → **HTTP 200**
+   - 报告 `#2`，session `#5`，overall **91.3**
+   - `expression_fluency.score=91.3`；reason 含语速 **177** 字/分、停顿 **2.5** 次/分、填充词 **2.3** 个/分、**12** 条有效语音回答
+   - `professional_match` / `logic_structure` / `job_competence`：score=null，reason=「未获得通过校验的双次评分」（缺维不补零，契约允许）
+   - `/reports/5` 页面 HTTP 200 可访问；**系手动打开**，非提交成功后的自动跳转
+3. **结论**
+   - 真人语音后端链路 + 声学量化：**通过**（可作证据）
+   - 用户视角闭环（最终提交 → 自动进报告页）：**未通过**
+   - **M2 暂不关闭**；修复反代超时后须再跑一场，要求最终提交自动跳转 `/reports/{sid}`；内容三维至少 1 项通过双评
+
+### 登记缺陷
+
+| ID | 级别 | 描述 |
+| --- | --- | --- |
+| R1 | 黄（历史） | edge-tts 实网 403；本轮探针已恢复合成，保留观察 |
+| **阻断** | 红 | 最终评分耗时超过 Next→后端反代连接寿命，前端 `ECONNRESET`/HTTP 500，且未查询会话状态或进入报告页 |
+| **R2** | 黄 | 内容三维全部缺失；契约允许，但报告仅剩流畅度，展示与评分质量不足。不降低证据校验标准；另开评分诊断票 |
+
+### edge-tts / 降级
+
+- 历史风险 R1 黄（实网 403）本轮**未复现**
+- `synthesize_to_file` 探针：`TTS_SAVE_OK True`，mp3 约 19008 bytes
+- 实网创建会话返回非空 `audio_url` / `transition_audio_urls`
+- H 断网轮次主动 `TTS_ENABLED=false`，验证 `audio_url=null` 时文本题目仍可推进（200 + followup/next）
+- 未更换 TTS 服务商、未增依赖、未改 `tts.py`
+
+### 端口与进程（证据落盘后清理）
+
+| 端口 | 用途 | 状态 |
+| --- | --- | --- |
+| 18082 | H 离线 uvicorn | 已清理 NO_LISTENER |
+| 18080 | real FastAPI | 证据保存后清理 → NO_LISTENER |
+| 34725 | Next real | 证据保存后清理 → NO_LISTENER |
+
