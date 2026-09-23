@@ -21,17 +21,11 @@ def setup_test_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "tts_transition_lines", "嗯，我了解了|请继续|谢谢你的回答")
 
     from server.db import engine
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     ensure_schema_upgrades(engine)
 
     with SessionLocal() as db:
-        db.query(Report).delete()
-        db.query(Answer).delete()
-        db.query(Session).delete()
-        db.query(Question).delete()
-        db.query(Job).delete()
-        db.query(User).delete()
-
         user = User(id=1, role="student", name_masked="张**", major="车辆工程", grade="大三")
         db.add(user)
 
