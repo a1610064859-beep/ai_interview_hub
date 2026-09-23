@@ -20,7 +20,12 @@ def get_report(sid: int = Path(..., ge=1)):
                 detail={"code": "SESSION_NOT_FOUND", "message": "面试会话不存在"},
             )
 
-        report = db.query(Report).filter(Report.session_id == sid).first()
+        report = (
+            db.query(Report)
+            .filter(Report.session_id == sid)
+            .order_by(Report.id.desc())
+            .first()
+        )
         if not report:
             raise HTTPException(
                 status_code=404,

@@ -280,8 +280,10 @@ async def submit_text_answer(
                     if res_renew.rowcount == 0:
                         cancel_event.set()
                         break
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "lease renewal failed for session %s: %s", sid, exc
+                )
 
     heartbeat_task = asyncio.create_task(_heartbeat_renewal())
 
@@ -666,8 +668,10 @@ async def submit_audio_answer(
                         if res_renew.rowcount == 0:
                             cancel_event.set()
                             break
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "lease renewal failed for session %s: %s", sid, exc
+                    )
 
         heartbeat_task = asyncio.create_task(_heartbeat_renewal())
 
