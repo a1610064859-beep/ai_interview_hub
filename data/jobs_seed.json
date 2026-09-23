@@ -15,12 +15,20 @@
       "ASIL-D",
       "ISO 26262"
     ],
-    "dims_json": [
-      "专业匹配度",
-      "逻辑结构",
-      "表达流畅度",
-      "岗位素养"
-    ],
+    "dims_json": {
+      "labels": [
+        "专业匹配度",
+        "逻辑结构",
+        "表达流畅度",
+        "岗位素养"
+      ],
+      "weights": {
+        "professional_match": 0.3,
+        "logic_structure": 0.25,
+        "expression_fluency": 0.2,
+        "job_competence": 0.25
+      }
+    },
     "questions": [
       {
         "type": "通用",
@@ -70,12 +78,20 @@
       "绝缘检测",
       "回馈制动"
     ],
-    "dims_json": [
-      "专业匹配度",
-      "逻辑结构",
-      "表达流畅度",
-      "岗位素养"
-    ],
+    "dims_json": {
+      "labels": [
+        "专业匹配度",
+        "逻辑结构",
+        "表达流畅度",
+        "岗位素养"
+      ],
+      "weights": {
+        "professional_match": 0.3,
+        "logic_structure": 0.25,
+        "expression_fluency": 0.2,
+        "job_competence": 0.25
+      }
+    },
     "questions": [
       {
         "type": "通用",

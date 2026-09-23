@@ -152,3 +152,84 @@ class GrowthTrendResponse(BaseModel):
     points: list[GrowthTrendPoint]
     overall_comparison: OverallComparison
     dimension_changes: dict[str, DimensionChange | None]
+
+
+class JobParseRequest(BaseModel):
+    job_id: int = Field(..., ge=1)
+    jd_text: str = Field(...)
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("jd_text")
+    @classmethod
+    def validate_jd_text(cls, v: str) -> str:
+        stripped = v.strip()
+        if not (20 <= len(stripped) <= 20000):
+            raise ValueError("jd_text 去除首尾空白后长度必须在 20 至 20000 字符之间")
+        return stripped
+
+
+class JdQuestionItem(BaseModel):
+    type: Literal["通用", "专业", "情景"]
+    text: str
+
+
+class JobParseResponse(BaseModel):
+    job_id: int
+    job_id_source: Literal["request_binding"] = "request_binding"
+    applied: Literal[False] = False
+    dims: list[str]
+    questions: list[JdQuestionItem]
+    terms: list[str]
+
+
+class RecruiterCohort(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    input_mode: Literal["text", "voice"]
+    scoring_version: str
+
+
+class RecruiterWeights(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scheme: Literal["job_dims_renorm"] = "job_dims_renorm"
+    professional_match: float
+    logic_structure: float
+    expression_fluency: float
+    job_competence: float
+
+
+class CandidateDimensionScore(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    score: float | None = None
+    evidence: str | None = None
+    reason: str
+
+
+class CandidateItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: int
+    name_masked: str | None = None
+    major: str | None = None
+    grade: str | None = None
+    session_id: int
+    report_id: int
+    job_id: int
+    input_mode: str
+    scoring_version: str
+    trained_at: str | None = None
+    overall: float | None = None
+    weighted_score: float | None = None
+    valid_dim_count: int = Field(..., ge=0, le=4)
+    dimensions: dict[str, CandidateDimensionScore]
+    report_path: str
+
+
+class CandidatesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_id: int
+    job_title: str
+    cohort: RecruiterCohort | None = None
+    available_cohorts: list[RecruiterCohort]
+    weights: RecruiterWeights | None = None
+    weights_error: Literal["JOB_WEIGHTS_INVALID"] | None = None
+    eligibility: Literal["min_valid_dims_3"]
+    candidates: list[CandidateItem]

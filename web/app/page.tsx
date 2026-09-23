@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -778,11 +779,21 @@ export default function HomePage() {
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
       <header className="mb-8 min-w-0 max-w-full">
-        <p className="text-sm tracking-[0.18em] text-[#7eb6ff]">智能汽车座舱</p>
-        <h1 className="mt-2 text-3xl font-semibold text-white">智驾未来 · AI面试仓</h1>
-        <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">
-          选择岗位，语音或文本作答，查看首题与进度。
-        </p>
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm tracking-[0.18em] text-[#7eb6ff]">智能汽车座舱</p>
+            <h1 className="mt-2 text-3xl font-semibold text-white">智驾未来 · AI面试仓</h1>
+            <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">
+              选择岗位，语音或文本作答，查看首题与进度。
+            </p>
+          </div>
+          <Link
+            href="/recruiter"
+            className="rounded-full border border-[#2f6fed] px-4 py-2 text-sm text-[#7eb6ff]"
+          >
+            企业初筛
+          </Link>
+        </div>
       </header>
 
       {view.phase === "config" ? <MessagePanel title="配置错误" message={view.message} /> : null}

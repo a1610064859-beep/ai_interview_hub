@@ -24,9 +24,44 @@ SEED_STUDENTS = (
     },
 )
 
+_WEIGHT_KEYS = (
+    "professional_match",
+    "logic_structure",
+    "expression_fluency",
+    "job_competence",
+)
+
 
 class SeedStudentConflictError(RuntimeError):
     """目标学生 ID 已存在但档案字段与演示种子不一致；禁止覆盖。"""
+
+
+class SeedDimsJsonError(RuntimeError):
+    """种子 dims_json 不符合 T8 §5.1 批准形状。"""
+
+
+def _validate_dims_json(dims_json, title: str) -> None:
+    """T8：两岗 dims_json 须为含 weights 的对象；禁止静默接受旧名称数组。"""
+    if not isinstance(dims_json, dict):
+        raise SeedDimsJsonError(
+            f"岗位「{title}」dims_json 必须为对象（含 labels/weights），不能是名称数组"
+        )
+    weights = dims_json.get("weights")
+    if not isinstance(weights, dict) or set(weights.keys()) != set(_WEIGHT_KEYS):
+        raise SeedDimsJsonError(
+            f"岗位「{title}」dims_json.weights 必须恰好含四维英文键"
+        )
+    total = 0.0
+    for key in _WEIGHT_KEYS:
+        val = weights[key]
+        if isinstance(val, bool) or not isinstance(val, (int, float)) or val <= 0:
+            raise SeedDimsJsonError(f"岗位「{title}」权重 {key} 必须为 >0 的 number")
+        total += float(val)
+    if abs(total - 1.0) > 1e-6:
+        raise SeedDimsJsonError(f"岗位「{title}」权重合计必须为 1.0，当前={total}")
+    labels = dims_json.get("labels")
+    if labels is not None and (not isinstance(labels, list) or len(labels) != 4):
+        raise SeedDimsJsonError(f"岗位「{title}」labels 若存在长度须为 4")
 
 
 def _ensure_seed_students(db) -> dict:
@@ -89,6 +124,7 @@ def import_seeds(seed_path=None, db=None) -> dict:
             jd_digest = item.get("jd_digest")
             terms_json = item.get("terms_json")
             dims_json = item.get("dims_json")
+            _validate_dims_json(dims_json, title)
 
             job = db.query(Job).filter(Job.family == family, Job.title == title).first()
             if job is None:
@@ -145,7 +181,7 @@ def import_seeds(seed_path=None, db=None) -> dict:
 if __name__ == "__main__":
     try:
         result = import_seeds()
-    except SeedStudentConflictError as exc:
+    except (SeedStudentConflictError, SeedDimsJsonError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
     print(f"Seeds imported successfully: {result}")
