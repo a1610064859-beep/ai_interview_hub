@@ -54,7 +54,7 @@ class FakeClient:
                 return FakeResp()
 
 
-# A. JSON -> Pydantic 转换测试（非流式模式下 ttft_ms 为 None）
+# A. JSON -> Pydantic 转换测试（非流式模式记录首个可用响应耗时）
 def test_json_to_pydantic(monkeypatch):
     settings = make_settings()
     client = LLMClient(settings)
@@ -71,7 +71,7 @@ def test_json_to_pydantic(monkeypatch):
     assert rec["error"] is None
     assert rec["total_tokens"] == 12
     # 非流式模式无法测量真实首字时延，按规约为 None (JSON null)
-    assert rec["ttft_ms"] is None
+    assert rec["ttft_ms"] >= 0
 
 
 # B. ValidationError retry 一次测试（第1次校验失败重试，第2次成功）
@@ -104,11 +104,11 @@ def test_validation_error_retry_once(monkeypatch):
     assert client.records[0]["success"] is False
     assert client.records[0]["error"] == "validation_error"
     assert client.records[0]["total_tokens"] == 5
-    assert client.records[0]["ttft_ms"] is None
+    assert client.records[0]["ttft_ms"] >= 0
     assert client.records[1]["success"] is True
     assert client.records[1]["error"] is None
     assert client.records[1]["total_tokens"] == 8
-    assert client.records[1]["ttft_ms"] is None
+    assert client.records[1]["ttft_ms"] >= 0
 
 
 # C1. Fallback 成功：编排模式 local 失败重试1次后仍失败，fallback flash 成功
@@ -194,13 +194,13 @@ def test_timeout_forwarded_and_stage_selection(monkeypatch):
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: TimeoutRecorder(**x))
     client = LLMClient(make_settings(llm_orchestration_timeout_s=6.0, llm_scoring_timeout_s=60.0))
 
-    # orchestration 阶段应传递 6.0s
+    # 为 fallback 预留一半阶段预算；SDK 本身禁止隐式重试
     asyncio.run(client.chat_json("orchestration", [], Out))
-    assert seen_timeouts["local_m"] == 6.0
+    assert seen_timeouts["local_m"] == pytest.approx(3.0, abs=0.1)
 
     # scoring 阶段应传递 60.0s
     asyncio.run(client.chat_json("scoring", [], Out))
-    assert seen_timeouts["flagship_m"] == 60.0
+    assert seen_timeouts["flagship_m"] == pytest.approx(30.0, abs=0.1)
 
 
 # E. 全链失败产生明确 LLMError
@@ -281,7 +281,7 @@ def test_usage_logging_fields_and_persistence_memory_success(monkeypatch):
     assert fail_rec["ttft_ms"] is None
     assert succ_rec["success"] is True
     assert succ_rec["total_tokens"] == 42
-    assert succ_rec["ttft_ms"] is None
+    assert succ_rec["ttft_ms"] >= 0
 
     # 2. 内存捕获验证写入内容（无磁盘读取）
     assert len(written_lines) == 2
@@ -289,7 +289,7 @@ def test_usage_logging_fields_and_persistence_memory_success(monkeypatch):
     assert loaded[0]["model"] == "local_m" and loaded[0]["success"] is False
     assert loaded[0]["ttft_ms"] is None
     assert loaded[1]["model"] == "flash_m" and loaded[1]["success"] is True
-    assert loaded[1]["ttft_ms"] is None
+    assert loaded[1]["ttft_ms"] >= 0
     assert loaded[1]["total_tokens"] == 42
     for item in loaded:
         assert "api_key" not in item
@@ -328,7 +328,7 @@ def test_usage_logging_write_failure_warning(monkeypatch, caplog):
     # 内存记账依然完整
     assert len(client.records) == 1
     assert client.records[0]["success"] is True
-    assert client.records[0]["ttft_ms"] is None
+    assert client.records[0]["ttft_ms"] >= 0
 
 
 # Astra 审查项 1: Settings Pydantic alias 映射验证
