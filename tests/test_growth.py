@@ -76,17 +76,12 @@ def setup_growth_db(monkeypatch):
     monkeypatch.setattr(settings, "tts_enabled", False)
     from server.db import engine
 
+    # conftest.py 已将 DATABASE_URL 指向临时库；整库重建保证每个用例从空库开始
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     ensure_schema_upgrades(engine)
 
     with SessionLocal() as db:
-        db.query(Report).delete()
-        db.query(Answer).delete()
-        db.query(Session).delete()
-        db.query(Question).delete()
-        db.query(Job).delete()
-        db.query(User).delete()
-
         db.add(
             User(
                 id=3,

@@ -29,18 +29,13 @@ from server.services.asr import ASRUnavailableError, normalize_asr_text
 
 @pytest.fixture(autouse=True)
 def setup_test_db(monkeypatch):
+    # conftest.py 已将 DATABASE_URL 指向临时库；整库重建保证每个用例从空库开始
     from server.db import engine
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     ensure_schema_upgrades(engine)
 
     with SessionLocal() as db:
-        db.query(Report).delete()
-        db.query(Answer).delete()
-        db.query(Session).delete()
-        db.query(Question).delete()
-        db.query(Job).delete()
-        db.query(User).delete()
-
         db.add(User(id=1, role="student", name_masked="张**", major="车辆工程", grade="大三"))
         db.add(Job(
             id=1, family="智驾", title="智驾测试",

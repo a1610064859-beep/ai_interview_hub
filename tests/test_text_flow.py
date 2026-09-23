@@ -18,20 +18,13 @@ from server.services.scoring import SingleDimensionScore, SingleScoringResult, S
 def setup_test_db(monkeypatch):
     # 文本编排用例不依赖真实 TTS；关闭以避免 edge-tts 可用时 audio_url 非 null 破坏契约断言
     monkeypatch.setattr(settings, "tts_enabled", False)
-    # 使用测试独立数据库或重置表
+    # conftest.py 已将 DATABASE_URL 指向临时库；整库重建保证每个用例从空库开始
     from server.db import engine
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     ensure_schema_upgrades(engine)
-    
+
     with SessionLocal() as db:
-        # 清空表
-        db.query(Report).delete()
-        db.query(Answer).delete()
-        db.query(Session).delete()
-        db.query(Question).delete()
-        db.query(Job).delete()
-        db.query(User).delete()
-        
         # 预置用户
         user = User(id=1, role="student", name_masked="张**", major="车辆工程", grade="大三")
         db.add(user)
