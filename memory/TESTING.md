@@ -524,3 +524,11 @@
 - **合入**：merge 干净无冲突（+1892 行，11 文件）。
 - **合入后动作**：重跑 `scripts/import_seeds.py` 完成 dims_json 形状迁移（jobs_updated=2，旧数组→{labels,weights}）；全量后端 **106 passed, 2 skipped**（含 test_recruiter.py 19 项）；前端 build 通过（/recruiter 5.8kB）、61 项测试通过。
 - **待人工**：浏览器走查"JD→题库→学生训练→报告→企业排序"全链路（自动化已覆盖同源/排序/隔离逻辑），纳入 M3 冻结验收（阶段 5）。
+
+## T9 新生端合入（2026-09-23）
+
+- **预审**（只读评审 feature/T9-freshman）：结论"可合入，仅 3 处机械性冲突"。静态岗位地图+LLM 仅组织（CounselLlmResponse 白名单两字段）、LLM 失败静默降级 degraded、岗位地图硬限 2 个种子岗位（第三岗位钳制、无分数、断言零写库）、train_hint 深链进入统一训练流程、双学生成长隔离（A2/A9 用例）、无新依赖无新表、测试库落临时库与 conftest 兼容。
+- **冲突解决**：main.py 双方 router 并存；schemas.py 双方尾部追加并存；page.tsx 保留 main 的 flex 头部，新生入口改 `next/link` 与企业初筛并列（原 `<a>` 弃用）。
+- **合入后验证**：全量后端 **118 passed, 2 skipped**（含 test_counsel.py 12 项）；演示库恰含两个种子岗位 title（counsel 硬性前置）；前端 61 项测试通过、build 通过（7 静态页，含 /counsel）。
+- **程序备注**：T9 任务票边界未定稿即施工（分支 +684 行均为新增），预审确认无越界文件；补录此备注供队长知悉。
+- **待人工**：浏览器走查"新生咨询 → 30 秒进入岗位训练 → 成长页可见该次报告"，纳入 M3 冻结验收（阶段 5）。
