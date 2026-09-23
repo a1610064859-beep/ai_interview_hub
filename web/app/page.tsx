@@ -10,8 +10,6 @@ import {
   parseAnswerResponse,
   type SessionCreateData,
   type AnswerData,
-  pickTransitionAudioUrl,
-  ActionLock,
   TransitionAudioTracker,
   QuestionAudioPlayer,
 } from "../lib/recorder";
@@ -966,7 +964,7 @@ function DeviceCheckPanel({
   onPass: () => void;
 }) {
   const [status, setStatus] = useState<
-    "idle" | "recording" | "playing" | "confirm" | "playback_failed"
+    "idle" | "recording" | "confirm" | "playback_failed"
   >("idle");
   const [message, setMessage] = useState<string | null>(null);
   const recorderRef = useRef<VoiceRecorder | null>(null);
@@ -1016,7 +1014,16 @@ function DeviceCheckPanel({
       beginLockRef.current = false;
       return;
     }
-    const recording = await rec.stop();
+    let recording: VoiceRecording;
+    try {
+      recording = await rec.stop();
+    } catch {
+      recorderRef.current = null;
+      beginLockRef.current = false; // 失败释放锁，允许重试
+      setStatus("idle");
+      setMessage("自检录音处理失败，请重试。");
+      return;
+    }
     recorderRef.current = null;
     beginLockRef.current = false; // 录制完成释放
     if (recording.blob.size === 0) {
@@ -1087,11 +1094,6 @@ function DeviceCheckPanel({
         {status === "recording" ? (
           <span className="text-sm text-[#ffb067]" role="status">
             正在录制自检语音（{SELF_CHECK_SECONDS} 秒）…
-          </span>
-        ) : null}
-        {status === "playing" ? (
-          <span className="text-sm text-[#7eb6ff]" role="status">
-            正在回放你的录音…
           </span>
         ) : null}
         {status === "confirm" ? (
