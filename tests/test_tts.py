@@ -61,6 +61,12 @@ async def fake_synthesize_to_file(text: str, output_path: Path) -> bool:
     return True
 
 
+def expected_audio_url(filename: str) -> str:
+    """音频 URL 携带文件版本，避免会话编号复用时命中浏览器旧缓存。"""
+    file_path = Path(settings.tts_output_dir) / filename
+    return f"/audio/{filename}?v={file_path.stat().st_mtime_ns}"
+
+
 def test_tts_prefetch_six_fixed_questions_success():
     """A. 6道固定题并行预取成功，创建会话返回时对应6个 MP3 已存在"""
     client = TestClient(app)
@@ -72,7 +78,7 @@ def test_tts_prefetch_six_fixed_questions_success():
 
         sid = data["sid"]
         assert data["question"]["seq"] == 1
-        assert data["question"]["audio_url"] == f"/audio/session_{sid}_q1.mp3"
+        assert data["question"]["audio_url"] == expected_audio_url(f"session_{sid}_q1.mp3")
 
         # 验证 6 道固定题的 MP3 文件在创建返回时均已存在
         audio_dir = Path(settings.tts_output_dir)
@@ -91,7 +97,58 @@ def test_tts_prefetch_six_fixed_questions_success():
             ans_data = ans_resp.json()
             assert ans_data["type"] == "next"
             assert ans_data["question"]["seq"] == 2
-            assert ans_data["question"]["audio_url"] == f"/audio/session_{sid}_q2.mp3"
+            assert ans_data["question"]["audio_url"] == expected_audio_url(f"session_{sid}_q2.mp3")
+
+
+def test_tts_prefetch_replaces_stale_first_question_audio():
+    """数据库重建复用 session id 时，首题不能播放旧会话留下的 MP3。"""
+    audio_dir = Path(settings.tts_output_dir)
+    stale_file = audio_dir / "session_1_q1.mp3"
+    stale_file.write_bytes(b"STALE_AUDIO_FOR_ANOTHER_QUESTION")
+
+    client = TestClient(app)
+    with patch("server.services.tts.synthesize_to_file", side_effect=fake_synthesize_to_file):
+        response = client.post(
+            "/api/sessions",
+            json={"job_id": 1, "user_id": 1, "mode": "毕业生"},
+        )
+
+    assert response.status_code == 200
+    question = response.json()["question"]
+    assert question["audio_url"] == expected_audio_url("session_1_q1.mp3")
+    assert stale_file.read_bytes() == f"FAKE_AUDIO_DATA_FOR:{question['text']}".encode("utf-8")
+
+
+@pytest.mark.anyio
+async def test_tts_prefetch_drops_stale_question_audio_on_failure():
+    """重新合成失败时不把旧 MP3 当作当前题目的音频返回。"""
+    audio_dir = Path(settings.tts_output_dir)
+    stale_file = audio_dir / "session_77_q1.mp3"
+    stale_file.write_bytes(b"STALE_AUDIO_FOR_ANOTHER_QUESTION")
+
+    async def failed_synthesis(text: str, output_path: Path) -> bool:
+        return False
+
+    with patch("server.services.tts.synthesize_to_file", side_effect=failed_synthesis):
+        urls = await tts.prefetch_session_questions(77, ["现在的第一题"])
+
+    assert urls == {1: None}
+    assert not stale_file.exists()
+    assert tts.get_question_audio_url(77, 1) is None
+
+
+@pytest.mark.anyio
+async def test_tts_prefetch_replaces_stale_transition_audio():
+    """会话编号复用时，过渡语也按当前配置重新生成。"""
+    audio_dir = Path(settings.tts_output_dir)
+    stale_file = audio_dir / "session_77_trans_0.mp3"
+    stale_file.write_bytes(b"STALE_TRANSITION_AUDIO")
+
+    with patch("server.services.tts.synthesize_to_file", side_effect=fake_synthesize_to_file):
+        urls = await tts.prefetch_session_transitions(77)
+
+    assert urls[0] == expected_audio_url("session_77_trans_0.mp3")
+    assert stale_file.read_bytes() == f"FAKE_AUDIO_DATA_FOR:{settings.transition_lines_list[0]}".encode("utf-8")
 
 
 def test_tts_prefetch_single_failure_does_not_block():
@@ -109,7 +166,7 @@ def test_tts_prefetch_single_failure_does_not_block():
         data = resp.json()
 
         sid = data["sid"]
-        assert data["question"]["audio_url"] == f"/audio/session_{sid}_q1.mp3"
+        assert data["question"]["audio_url"] == expected_audio_url(f"session_{sid}_q1.mp3")
 
         audio_dir = Path(settings.tts_output_dir)
         # q1, q2, q4, q5, q6 存在，q3 不存在
@@ -132,7 +189,7 @@ def test_tts_prefetch_single_failure_does_not_block():
             # 回答 q3 -> q4，q4 audio_url 正常
             ans_resp4 = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "答q3"})
             assert ans_resp4.status_code == 200
-            assert ans_resp4.json()["question"]["audio_url"] == f"/audio/session_{sid}_q4.mp3"
+            assert ans_resp4.json()["question"]["audio_url"] == expected_audio_url(f"session_{sid}_q4.mp3")
 
 
 def test_tts_all_failure_graceful_degradation():
@@ -168,22 +225,22 @@ def test_tts_transition_audio_rotation():
             # 提交第1次回答 -> 轮转到 index 0
             r1 = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "回答1"})
             assert r1.status_code == 200
-            assert r1.json()["transition_audio_url"] == f"/audio/session_{sid}_trans_0.mp3"
+            assert r1.json()["transition_audio_url"] == expected_audio_url(f"session_{sid}_trans_0.mp3")
 
             # 提交第2次回答 -> 轮转到 index 1
             r2 = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "回答2"})
             assert r2.status_code == 200
-            assert r2.json()["transition_audio_url"] == f"/audio/session_{sid}_trans_1.mp3"
+            assert r2.json()["transition_audio_url"] == expected_audio_url(f"session_{sid}_trans_1.mp3")
 
             # 提交第3次回答 -> 轮转到 index 2
             r3 = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "回答3"})
             assert r3.status_code == 200
-            assert r3.json()["transition_audio_url"] == f"/audio/session_{sid}_trans_2.mp3"
+            assert r3.json()["transition_audio_url"] == expected_audio_url(f"session_{sid}_trans_2.mp3")
 
             # 提交第4次回答 -> 轮转回 index 0
             r4 = client.post(f"/api/sessions/{sid}/answers/text", json={"answer_text": "回答4"})
             assert r4.status_code == 200
-            assert r4.json()["transition_audio_url"] == f"/audio/session_{sid}_trans_0.mp3"
+            assert r4.json()["transition_audio_url"] == expected_audio_url(f"session_{sid}_trans_0.mp3")
 
         # 验证对应的过渡语音频文件均已产生
         audio_dir = Path(settings.tts_output_dir)

@@ -66,8 +66,18 @@ def get_audio_url_if_exists(filename: str) -> str | None:
         return None
     file_path = Path(settings.tts_output_dir) / filename
     if file_path.is_file() and file_path.stat().st_size > 0:
-        return f"/audio/{filename}"
+        return f"/audio/{filename}?v={file_path.stat().st_mtime_ns}"
     return None
+
+
+def _discard_stale_audio(file_path: Path) -> bool:
+    """新会话可能复用旧数据库的 session id；旧 MP3 必须先失效。"""
+    try:
+        file_path.unlink(missing_ok=True)
+        return True
+    except OSError as exc:
+        logger.warning("无法清除旧音频 %s: %s", file_path.name, exc)
+        return False
 
 
 async def prefetch_session_questions(session_id: int, questions: list) -> dict[int, str | None]:
@@ -83,14 +93,13 @@ async def prefetch_session_questions(session_id: int, questions: list) -> dict[i
         filename = f"session_{session_id}_q{seq}.mp3"
         file_path = audio_dir / filename
 
-        # 若文件已存在有效，直接复用
-        if file_path.is_file() and file_path.stat().st_size > 0:
-            return seq, f"/audio/{filename}"
+        if not _discard_stale_audio(file_path):
+            return seq, None
 
         try:
             ok = await synthesize_to_file(text, file_path)
             if ok:
-                return seq, f"/audio/{filename}"
+                return seq, get_audio_url_if_exists(filename)
         except Exception as exc:
             logger.warning("会话 %s 预取题目 %s 异常: %s", session_id, seq, exc)
         return seq, None
@@ -127,13 +136,13 @@ async def prefetch_session_transitions(session_id: int) -> list[str | None]:
         filename = f"session_{session_id}_trans_{idx}.mp3"
         file_path = audio_dir / filename
 
-        if file_path.is_file() and file_path.stat().st_size > 0:
-            return idx, f"/audio/{filename}"
+        if not _discard_stale_audio(file_path):
+            return idx, None
 
         try:
             ok = await synthesize_to_file(text, file_path)
             if ok:
-                return idx, f"/audio/{filename}"
+                return idx, get_audio_url_if_exists(filename)
         except Exception as exc:
             logger.warning("会话 %s 预生成过渡语 %s 异常: %s", session_id, idx, exc)
         return idx, None
@@ -178,10 +187,13 @@ async def synthesize_followup(session_id: int, q_seq: int, text: str) -> str | N
     filename = f"session_{session_id}_q{q_seq}_followup.mp3"
     file_path = audio_dir / filename
 
+    if not _discard_stale_audio(file_path):
+        return None
+
     try:
         ok = await synthesize_to_file(text, file_path)
         if ok:
-            return f"/audio/{filename}"
+            return get_audio_url_if_exists(filename)
     except Exception as exc:
         logger.warning("会话 %s 追问语音合成异常: %s", session_id, exc)
 
