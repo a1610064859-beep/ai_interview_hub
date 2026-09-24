@@ -514,7 +514,7 @@ export function loadInterviewIdentity(): InterviewIdentity | null {
 export function inputModeLabel(mode: InputModeValue | "mixed" | null): string {
   if (mode === "text") return "文本";
   if (mode === "voice") return "语音";
-  if (mode === "mixed") return "混合口径（不可并线比较）";
+  if (mode === "mixed") return "混合口径";
   return "未标识";
 }
 
