@@ -1503,7 +1503,6 @@ function QuestionSubtitle({
       setShown((n) => {
         if (n >= text.length) {
           clearInterval(timer);
-          onTypingChange?.(false);
           return n;
         }
         return n + 1;
@@ -1514,6 +1513,11 @@ function QuestionSubtitle({
       onTypingChange?.(false);
     };
   }, [text, onTypingChange]);
+  useEffect(() => {
+    if (text && shown >= text.length) {
+      onTypingChange?.(false);
+    }
+  }, [shown, text, onTypingChange]);
   return (
     <p className="mt-4 min-h-20 break-anywhere text-lg leading-8">
       <span className="text-white">{text.slice(0, shown)}</span>
