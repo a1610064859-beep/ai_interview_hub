@@ -18,7 +18,34 @@ body {
     radial-gradient(800px 420px at 100% 0%, rgba(249, 115, 22, 0.14), transparent 55%),
     #080c14;
   color: #d7e6ff;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background-attachment: fixed;
 }
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  background-image: linear-gradient(rgba(126, 182, 255, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(126, 182, 255, 0.06) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+}
+
+.site-shell { position: relative; }
+.site-header { position: relative; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(126,182,255,.16); }
+.site-header::after { content: ""; position: absolute; left: 0; bottom: -1px; width: 9rem; height: 2px; background: linear-gradient(90deg, #ff8a2a, transparent); box-shadow: 0 0 18px #ff8a2a; }
+.eyebrow { color: #8fdcff; text-transform: uppercase; }
+.hero-title { letter-spacing: -0.045em; text-shadow: 0 0 28px rgba(47,111,237,.45); }
+.hero-title span { color: #ff9d52; }
+
+.site-shell section { animation: panel-rise .55s ease both; }
+.site-shell section.rounded-2xl, .site-shell section.rounded-3xl { border-color: rgba(126,182,255,.22); background: linear-gradient(145deg, rgba(15,27,53,.9), rgba(7,12,25,.92)); box-shadow: 0 18px 60px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.05); }
+.site-shell button, .site-shell a { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.site-shell button:hover, .site-shell a:hover { transform: translateY(-1px); }
+
+@keyframes panel-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 .break-anywhere {
   overflow-wrap: anywhere;

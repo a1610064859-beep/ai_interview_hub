@@ -794,14 +794,14 @@ export default function HomePage() {
   }, [view]);
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
-      <header className="mb-8 min-w-0 max-w-full">
+    <main className="site-shell mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-10">
+      <header className="site-header mb-10 min-w-0 max-w-full">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm tracking-[0.18em] text-[#7eb6ff]">智能汽车座舱</p>
-            <h1 className="mt-2 text-3xl font-semibold text-white">智驾未来 · AI面试仓</h1>
+            <p className="eyebrow text-sm tracking-[0.28em]">智能汽车座舱 / 未来人才界面</p>
+            <h1 className="hero-title mt-3 text-3xl font-semibold text-white sm:text-5xl">智驾未来 <span>·</span> AI面试仓</h1>
             <p className="mt-2 max-w-full text-sm text-[#9fb4d4]">
-              选择岗位，语音或文本作答，查看首题与进度。
+              让每一次回答都成为能力轨迹上的一束光。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
