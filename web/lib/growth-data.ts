@@ -597,7 +597,8 @@ function parseCohortKey(key: string): {
 
 /**
  * 折线图：null 保持为 null（不补 0）；connectNulls 恒为 false。
- * 多 cohort（input_mode × scoring_version）时 overall 与四维全部拆系列，非本 cohort 填 null。
+ * 多 cohort 时总体分按输入模式和评分版本拆分；有效维度可在同一已知评分版本内跨输入模式连线。
+ * 缺失维度及未知/不同评分版本始终断线。
  * 单 cohort 时保持一条综合分 + 四维折线。
  */
 export function transformTrendToLineOptions(
@@ -667,6 +668,20 @@ export function transformTrendToLineOptions(
         cohortIdentityKey(p.inputMode, p.scoringVersion) === key ? p.overall : null,
       ),
     });
+  }
+
+  const dimensionGroupKey = (point: TimelinePoint) =>
+    point.inputMode !== null && point.scoringVersion !== null
+      ? `version:${point.scoringVersion}`
+      : `cohort:${cohortIdentityKey(point.inputMode, point.scoringVersion)}`;
+  const dimensionKeys = [...new Set(timeline.map(dimensionGroupKey))];
+  for (const key of dimensionKeys) {
+    const members = timeline.filter((point) => dimensionGroupKey(point) === key);
+    const first = members[0];
+    const modes = new Set(members.map((point) => point.inputMode));
+    const label = modes.size > 1 && first.scoringVersion !== null
+      ? first.scoringVersion
+      : cohortDisplayLabel(first.inputMode, first.scoringVersion);
     for (const dim of REQUIRED_DIMENSIONS) {
       const dimName = `${label} ${DIMENSION_LABEL_MAP[dim]}`;
       legendData.push(dimName);
@@ -674,8 +689,8 @@ export function transformTrendToLineOptions(
         name: dimName,
         type: "line",
         connectNulls,
-        data: timeline.map((p) =>
-          cohortIdentityKey(p.inputMode, p.scoringVersion) === key ? p.dimensions[dim] : null,
+        data: timeline.map((point) =>
+          dimensionGroupKey(point) === key ? point.dimensions[dim] : null,
         ),
       });
     }

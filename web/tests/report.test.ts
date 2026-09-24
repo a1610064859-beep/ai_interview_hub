@@ -455,14 +455,14 @@ describe("growth-data null / connectNulls / incomparable", () => {
     assert.equal((mixedOpts._meta as { mixed: boolean }).mixed, true);
     assert.equal(assertLineOptionsNoZeroFill(mixedOpts), true);
     assert.equal(allSeriesConnectNullsFalse(mixedOpts), true);
-    // text/voice 的 overall 与内容维度不跨模式连线
+    // text/voice 的总体分分开，同版本有效维度保持连线
     const textOverall = getSeriesDataByName(mixedOpts, "文本·v1 综合分");
     const voiceOverall = getSeriesDataByName(mixedOpts, "语音·v1 综合分");
-    const textProf = getSeriesDataByName(mixedOpts, "文本·v1 专业匹配度");
-    assert.ok(textOverall && voiceOverall && textProf);
+    const sharedProf = getSeriesDataByName(mixedOpts, "v1 专业匹配度");
+    assert.ok(textOverall && voiceOverall && sharedProf);
     assert.deepEqual(textOverall, [75, null]);
     assert.deepEqual(voiceOverall, [null, 78]);
-    assert.deepEqual(textProf, [73, null]);
+    assert.deepEqual(sharedProf, [73, 75]);
     assert.equal(voiceOverall[0], null);
     assert.equal(textOverall[1], null);
 
@@ -566,7 +566,7 @@ describe("growth-data report href + cohort 连线（Astra 定点）", () => {
     assert.equal(buildReportHref(11, 3, 1), "/reports/11?user_id=3&job_id=1");
   });
 
-  it("text/voice 的 overall 与内容维度不跨模式连线", () => {
+  it("text/voice 的 overall 分开，同版本有效维度连线", () => {
     const trend = parseGrowthTrendResponse(
       trendPayload({
         input_mode: "mixed",
@@ -641,8 +641,8 @@ describe("growth-data report href + cohort 连线（Astra 定点）", () => {
     const opts = transformTrendToLineOptions(trend, history);
     assert.deepEqual(getSeriesDataByName(opts, "文本·v1 综合分"), [70, null]);
     assert.deepEqual(getSeriesDataByName(opts, "语音·v1 综合分"), [null, 80]);
-    assert.deepEqual(getSeriesDataByName(opts, "文本·v1 专业匹配度"), [68, null]);
-    assert.deepEqual(getSeriesDataByName(opts, "语音·v1 专业匹配度"), [null, 75]);
+    assert.deepEqual(getSeriesDataByName(opts, "v1 专业匹配度"), [68, 75]);
+    assert.deepEqual(getSeriesDataByName(opts, "v1 表达流畅度"), [null, 82]);
     assert.equal(allSeriesConnectNullsFalse(opts), true);
   });
 

@@ -323,7 +323,7 @@ function GrowthPageInner() {
 
           {trend.inputMode === "mixed" ? (
             <p className="rounded-xl border border-orange-400/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-100">
-              文本与语音口径混合：不把不同输入模式连为同一条可比趋势线。
+              文本与语音口径混合：总体分不直接比较；同版本、两次均有效的单项维度可连线比较。
             </p>
           ) : null}
 
