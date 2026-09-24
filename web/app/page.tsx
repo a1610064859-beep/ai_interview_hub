@@ -794,8 +794,8 @@ export default function HomePage() {
   }, [view]);
 
   return (
-    <main className="site-shell mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-10">
-      <header className="site-header mb-10 min-w-0 max-w-full">
+    <main className="site-shell mx-auto w-full max-w-6xl px-3 py-4 sm:px-6 sm:py-8 xl:px-8 xl:py-10">
+      <header className="site-header mb-6 min-w-0 max-w-full sm:mb-10">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div>
             <p className="eyebrow text-sm tracking-[0.28em]">智能汽车座舱 / 未来人才界面</p>
@@ -979,7 +979,7 @@ export default function HomePage() {
       ) : null}
 
       {view.phase === "mock_done" ? (
-        <section className="min-w-0 max-w-full rounded-3xl border border-[#ff8a2a] bg-[#0c1730]/95 p-6">
+        <section className="min-w-0 max-w-full rounded-3xl border border-[#ff8a2a] bg-[#0c1730]/95 p-4 sm:p-6">
           <ModeBadge mode="mock" />
           <h2 className="mt-4 text-2xl text-white">演示完成</h2>
           <p className="mt-3 break-anywhere text-sm leading-6 text-[#b7c8e2]">
@@ -1247,8 +1247,8 @@ function InterviewPanel({
   }, [question.seq, question.audioUrl, isFollowup]);
 
   return (
-    <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-6 shadow-[0_0_32px_rgba(47,111,237,0.35)]">
-      <div className="flex min-w-0 gap-6">
+    <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-4 shadow-[0_0_32px_rgba(47,111,237,0.35)] sm:p-6">
+      <div className="flex min-w-0 flex-col gap-3 md:flex-row md:gap-6">
         <ProgressRail seq={question.seq} isFollowup={isFollowup} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
@@ -1434,14 +1434,14 @@ function InterviewPanel({
 
 function ProgressRail({ seq, isFollowup }: { seq: number; isFollowup: boolean }) {
   return (
-    <ol className="hidden shrink-0 flex-col gap-3 md:flex" aria-label="题目进度轨道">
+    <ol className="flex w-full min-w-0 items-center justify-between gap-1 overflow-x-auto pb-1 md:w-auto md:flex-col md:items-stretch md:justify-start md:gap-3 md:overflow-visible md:pb-0" aria-label="题目进度轨道">
       {Array.from({ length: TOTAL_QUESTIONS }, (_, i) => i + 1).map((n) => {
         const done = n < seq;
         const current = n === seq;
         return (
-          <li key={n} className="flex items-center gap-2">
+          <li key={n} className="flex shrink-0 flex-col items-center gap-1 md:flex-row md:gap-2">
             <span
-              className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs ${
+              className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs sm:h-8 sm:w-8 ${
                 done
                   ? "border-[#2f6fed] bg-[#2f6fed]/30 text-[#bcd7ff]"
                   : current
@@ -1453,7 +1453,7 @@ function ProgressRail({ seq, isFollowup }: { seq: number; isFollowup: boolean })
             >
               {n}
             </span>
-            <span className={`text-xs ${current ? "text-white" : "text-[#5b6b85]"}`}>
+            <span className={`hidden text-xs sm:inline ${current ? "text-white" : "text-[#5b6b85]"}`}>
               {done ? "已完成" : current ? (isFollowup ? "追问中" : "作答中") : "待作答"}
             </span>
           </li>
@@ -1495,6 +1495,11 @@ function QuestionSubtitle({
   useEffect(() => {
     setShown(0);
     if (!text) {
+      onTypingChange?.(false);
+      return;
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setShown(text.length);
       onTypingChange?.(false);
       return;
     }

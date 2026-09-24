@@ -289,6 +289,7 @@ export default function RecruiterPage() {
       chartInstance.current = null;
       return;
     }
+    const chartElement = chartRef.current;
     const radar = transformDimensionsToRadar(selected.dimensions);
     if (!radar.canRenderRadar || !radar.radarOptions) {
       chartInstance.current?.clear();
@@ -297,7 +298,10 @@ export default function RecruiterPage() {
     if (!chartInstance.current) {
       chartInstance.current = echarts.init(chartRef.current, undefined, { renderer: "canvas" });
     }
-    chartInstance.current.setOption(radar.radarOptions, true);
+    chartInstance.current.setOption({ ...radar.radarOptions, animation: false }, true);
+    const observer = new ResizeObserver(() => chartInstance.current?.resize());
+    observer.observe(chartElement);
+    return () => observer.disconnect();
   }, [selected]);
 
   async function runParse() {
@@ -350,11 +354,11 @@ export default function RecruiterPage() {
   })();
 
   return (
-    <main className="min-h-screen bg-[#050912] px-4 py-6 text-[#d7e3f7] md:px-8">
+    <main className="min-h-dvh bg-[#050912] px-3 py-4 text-[#d7e3f7] sm:px-6 sm:py-6 lg:px-8">
       <header className="mb-6 flex min-w-0 flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs tracking-[0.2em] text-[#7eb6ff]">RECRUITER · 同源候选</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">企业初筛看板</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-white sm:text-3xl">企业初筛看板</h1>
           <p className="mt-2 max-w-2xl text-sm text-[#9fb4d4]">
             候选仅来自学生端真实 sessions/reports；排序键为岗位 dims_json 企业加权，不等于报告等权 overall。
           </p>
@@ -373,7 +377,7 @@ export default function RecruiterPage() {
         </p>
       ) : null}
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[320px_minmax(0,1fr)_320px]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_minmax(280px,320px)]">
         <section className="rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
           <h2 className="text-lg text-white">岗位与 JD 草案</h2>
           <label className="mt-3 flex flex-col gap-2 text-sm text-[#9fb4d4]">
@@ -504,7 +508,7 @@ export default function RecruiterPage() {
               <p className="mt-2 text-sm text-[#9fb4d4]">
                 {selected.name_masked} · 有效维 {selected.valid_dim_count}
               </p>
-              <div ref={chartRef} className="mt-3 h-64 w-full" />
+              <div ref={chartRef} className="mt-3 h-56 w-full min-w-0 sm:h-64" />
               <ul className="mt-3 space-y-2 text-xs text-[#9fb4d4]">
                 {REQUIRED_DIMENSIONS.map((k) => {
                   const dim = selected.dimensions[k];

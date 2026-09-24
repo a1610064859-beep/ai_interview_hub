@@ -166,7 +166,7 @@ function ReportPageInner({ params }: { params: Promise<{ sid: string }> }) {
   }, [load, reloadToken]);
 
   return (
-    <main className="cabin-shell mx-auto min-h-dvh w-full max-w-7xl overflow-x-hidden px-4 py-6 sm:px-6">
+    <main className="cabin-shell mx-auto min-h-dvh w-full max-w-7xl overflow-x-hidden px-3 py-4 sm:px-6 sm:py-6">
       {state.kind === "loading" ? (
         <section className="cabin-panel flex min-h-[60vh] flex-col items-center justify-center gap-4 p-8" role="status">
           <div className="cabin-pulse h-16 w-16 rounded-full border border-cyan-400/40" />
@@ -205,7 +205,7 @@ export default function ReportPage({ params }: { params: Promise<{ sid: string }
   return (
     <Suspense
       fallback={
-        <main className="cabin-shell mx-auto min-h-dvh w-full max-w-7xl overflow-x-hidden px-4 py-6 sm:px-6">
+        <main className="cabin-shell mx-auto min-h-dvh w-full max-w-7xl overflow-x-hidden px-3 py-4 sm:px-6 sm:py-6">
           <section className="cabin-panel flex min-h-[60vh] flex-col items-center justify-center gap-4 p-8" role="status">
             <div className="cabin-pulse h-16 w-16 rounded-full border border-cyan-400/40" />
             <p className="text-sm text-slate-300">正在加载报告页…</p>
@@ -233,7 +233,7 @@ function ErrorPanel({
 }) {
   const isReportMissing = code === "REPORT_NOT_FOUND";
   return (
-    <section className="cabin-panel border-orange-500/40 p-6" role="alert">
+    <section className="cabin-panel border-orange-500/40 p-4 sm:p-6" role="alert">
       <h1 className="text-xl text-orange-300">{title}</h1>
       <p className="mt-3 break-anywhere text-sm leading-6 text-slate-300">{message}</p>
       <div className="mt-6 flex flex-wrap gap-3">
@@ -280,14 +280,12 @@ function ReportView({
     if (!instanceRef.current) {
       instanceRef.current = echarts.init(chartRef.current, undefined, { renderer: "canvas" });
     }
-    instanceRef.current.setOption(radar.radarOptions, true);
+    instanceRef.current.setOption({ ...radar.radarOptions, animation: false }, true);
 
-    const onResize = () => {
-      instanceRef.current?.resize();
-    };
-    window.addEventListener("resize", onResize);
+    const observer = new ResizeObserver(() => instanceRef.current?.resize());
+    observer.observe(chartRef.current);
     return () => {
-      window.removeEventListener("resize", onResize);
+      observer.disconnect();
       instanceRef.current?.dispose();
       instanceRef.current = null;
     };
@@ -329,7 +327,7 @@ function ReportView({
       </header>
 
       <section className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-10">
-        <div className="cabin-panel cabin-glow p-6 lg:col-span-4">
+        <div className="cabin-panel cabin-glow min-w-0 p-4 sm:p-6 lg:col-span-4">
           <p className="text-sm text-slate-400">综合评定</p>
           <div className="mt-4 flex items-center gap-6">
             <OverallRing percent={ringPct} label={overallText} />
@@ -344,7 +342,7 @@ function ReportView({
           </div>
         </div>
 
-        <div className="cabin-panel cabin-glow p-6 lg:col-span-6">
+        <div className="cabin-panel cabin-glow min-w-0 p-4 sm:p-6 lg:col-span-6">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-lg text-slate-50">多维能力雷达舱</h2>
             {degradeBadge ? (
@@ -354,7 +352,7 @@ function ReportView({
             ) : null}
           </div>
           {radar.canRenderRadar ? (
-            <div ref={chartRef} className="h-[320px] w-full max-w-full" />
+            <div ref={chartRef} className="h-[260px] w-full min-w-0 max-w-full sm:h-[320px]" />
           ) : (
             <LinearGauges report={report} />
           )}
@@ -402,7 +400,7 @@ function OverallRing({ percent, label }: { percent: number; label: string }) {
   const c = 2 * Math.PI * r;
   const offset = c * (1 - percent / 100);
   return (
-    <div className="relative h-[140px] w-[140px] shrink-0">
+    <div className="relative h-[112px] w-[112px] shrink-0 sm:h-[140px] sm:w-[140px]">
       <svg viewBox="0 0 140 140" className="h-full w-full -rotate-90">
         <circle cx="70" cy="70" r={r} fill="none" stroke="rgba(51,65,85,0.7)" strokeWidth="10" />
         <circle

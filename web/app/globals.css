@@ -19,7 +19,11 @@ body {
     linear-gradient(135deg, #020617 0%, #1e1b4b 48%, #09091b 100%);
   color: #d7e6ff;
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-  background-attachment: fixed;
+  background-attachment: scroll;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
 }
 
 body::before {
@@ -41,10 +45,10 @@ body::before {
 .hero-title span { color: #ff9d52; }
 
 .site-shell section { animation: panel-rise .55s ease both; }
-.site-shell section.rounded-2xl, .site-shell section.rounded-3xl { border: 1px solid rgba(255,255,255,.2); border-color: rgba(255,255,255,.2); background: linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); backdrop-filter: blur(24px); box-shadow: 0 24px 70px rgba(124,58,237,.22), inset 0 1px rgba(255,255,255,.08); }
+.site-shell section.rounded-2xl, .site-shell section.rounded-3xl { border: 1px solid rgba(255,255,255,.2); border-color: rgba(255,255,255,.2); background: linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(124,58,237,.16), inset 0 1px rgba(255,255,255,.08); }
 .site-shell button { background-image: linear-gradient(90deg, #7c3aed, #d946ef, #06b6d4); background-size: 200% auto; border-color: rgba(255,255,255,.28); color: white; }
 .site-shell button:hover { background-position: right center; box-shadow: 0 0 34px rgba(217,70,239,.42); }
-.site-shell a { border-color: rgba(255,255,255,.22); background: rgba(255,255,255,.08); backdrop-filter: blur(18px); }
+.site-shell a { border-color: rgba(255,255,255,.22); background: rgba(255,255,255,.08); backdrop-filter: blur(8px); }
 .site-shell a:hover { border-color: rgba(217,70,239,.7); box-shadow: 0 0 26px rgba(139,92,246,.35); }
 .site-shell button, .site-shell a { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
 .site-shell button:hover, .site-shell a:hover { transform: translateY(-1px); }
@@ -83,6 +87,48 @@ body::before {
   border: 1px solid rgba(6, 182, 212, 0.45);
   background: rgba(8, 47, 73, 0.45);
   padding: 0.75rem 0.9rem;
+}
+
+/* Baseline controls stay comfortable for touch, keyboard, and narrow screens. */
+html {
+  min-width: 320px;
+  scroll-behavior: smooth;
+}
+
+.site-shell,
+.cabin-shell {
+  min-width: 0;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+button,
+select {
+  min-height: 2.75rem;
+}
+
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: 3px solid #7eb6ff;
+  outline-offset: 3px;
+}
+
+canvas,
+svg,
+img,
+video {
+  max-width: 100%;
 }
 
 @keyframes cabin-pulse {
@@ -156,6 +202,75 @@ body::before {
 
 .subtitle-caret {
   animation: subtitle-caret 0.9s step-end infinite;
+}
+
+/* Small screens often use integrated graphics and thermal-limited CPUs. */
+@media (max-width: 767px) {
+  body {
+    background-attachment: scroll;
+  }
+
+  body::before {
+    display: none;
+  }
+
+  .site-shell section {
+    animation: none;
+  }
+
+  .site-shell section.rounded-2xl,
+  .site-shell section.rounded-3xl,
+  .site-shell a,
+  .cabin-panel {
+    backdrop-filter: none;
+  }
+
+  .site-shell section.rounded-2xl,
+  .site-shell section.rounded-3xl {
+    box-shadow: 0 8px 22px rgba(47, 111, 237, 0.14);
+  }
+
+  .site-shell button:hover,
+  .site-shell a:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .cabin-shell {
+    background-image: none;
+  }
+
+  .cabin-glow {
+    box-shadow: 0 0 12px rgba(6, 182, 212, 0.12);
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 380px) {
+  .site-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .site-shell section.rounded-2xl,
+  .site-shell section.rounded-3xl {
+    border-radius: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* growth select */

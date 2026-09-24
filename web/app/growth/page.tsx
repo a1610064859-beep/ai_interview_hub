@@ -207,11 +207,11 @@ function GrowthPageInner() {
       chartInstance.current = echarts.init(chartRef.current);
     }
     const { _meta: _ignored, ...options } = chartOptions;
-    chartInstance.current.setOption(options, true);
-    const onResize = () => chartInstance.current?.resize();
-    window.addEventListener("resize", onResize);
+    chartInstance.current.setOption({ ...options, animation: false }, true);
+    const observer = new ResizeObserver(() => chartInstance.current?.resize());
+    observer.observe(chartRef.current);
     return () => {
-      window.removeEventListener("resize", onResize);
+      observer.disconnect();
     };
   }, [chartOptions]);
 
@@ -363,7 +363,7 @@ function GrowthPageInner() {
           </div>
 
           {trend.points.length >= 1 ? (
-            <div ref={chartRef} className="h-[360px] w-full max-w-full" />
+            <div ref={chartRef} className="h-[280px] w-full min-w-0 max-w-full sm:h-[360px]" />
           ) : null}
         </section>
       ) : null}
@@ -434,7 +434,7 @@ function GrowthPageInner() {
 
 function StatusCard({ title, detail }: { title: string; detail?: string }) {
   return (
-    <div className="cabin-panel p-6">
+    <div className="cabin-panel p-4 sm:p-6">
       <h2 className="text-lg text-slate-50">{title}</h2>
       {detail ? <p className="mt-2 text-sm text-slate-400">{detail}</p> : null}
       <Link href="/" className="mt-4 inline-block text-sm text-cyan-300 underline">
@@ -446,7 +446,7 @@ function StatusCard({ title, detail }: { title: string; detail?: string }) {
 
 export default function GrowthPage() {
   return (
-    <main className="cabin-shell mx-auto min-h-screen w-full max-w-6xl px-4 py-8">
+    <main className="cabin-shell mx-auto min-h-dvh w-full max-w-6xl px-3 py-5 sm:px-4 sm:py-8">
       <Suspense fallback={<StatusCard title="正在加载成长舱…" />}>
         <GrowthPageInner />
       </Suspense>
