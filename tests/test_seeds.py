@@ -71,6 +71,18 @@ def test_import_seeds_idempotent(test_db):
     assert db.query(Question).count() == 12
 
 
+def test_seed_questions_have_fixed_interview_structure():
+    seed_path = Path(__file__).resolve().parent.parent / "data" / "jobs_seed.json"
+    import json
+    data = json.loads(seed_path.read_text(encoding="utf-8"))
+    assert len(data) == 2
+    for job in data:
+        types = [question["type"] for question in job["questions"]]
+        assert types.count("通用") == 2
+        assert types.count("专业") == 3
+        assert types.count("情景") == 1
+        assert all(question.get("followup_hint", "").strip() for question in job["questions"])
+
 # 2. GET /api/jobs 空列表测试
 def test_get_jobs_empty(client):
     response = client.get("/api/jobs")

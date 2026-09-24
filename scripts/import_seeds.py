@@ -31,6 +31,9 @@ _WEIGHT_KEYS = (
     "job_competence",
 )
 
+_QUESTION_TYPES = ("通用", "专业", "情景")
+_QUESTION_TYPE_COUNTS = {"通用": 2, "专业": 3, "情景": 1}
+
 
 class SeedStudentConflictError(RuntimeError):
     """目标学生 ID 已存在但档案字段与演示种子不一致；禁止覆盖。"""
@@ -62,6 +65,25 @@ def _validate_dims_json(dims_json, title: str) -> None:
     labels = dims_json.get("labels")
     if labels is not None and (not isinstance(labels, list) or len(labels) != 4):
         raise SeedDimsJsonError(f"岗位「{title}」labels 若存在长度须为 4")
+
+
+def _validate_questions(questions, title: str) -> None:
+    """确保每个种子岗位可直接用于 M1 的固定题目编排。"""
+    if not isinstance(questions, list) or len(questions) != 6:
+        raise ValueError(f"岗位「{title}」必须恰好配置 6 道题")
+    counts = {kind: 0 for kind in _QUESTION_TYPES}
+    for index, question in enumerate(questions, start=1):
+        q_type = question.get("type")
+        text = question.get("text")
+        if q_type not in _QUESTION_TYPES:
+            raise ValueError(f"岗位「{title}」第 {index} 题题型无效: {q_type}")
+        if not isinstance(text, str) or not 1 <= len(text.strip()) <= 5000:
+            raise ValueError(f"岗位「{title}」第 {index} 题题干长度必须为 1-5000 字符")
+        if not isinstance(question.get("followup_hint"), str) or not question["followup_hint"].strip():
+            raise ValueError(f"岗位「{title}」第 {index} 题缺少追问提示")
+        counts[q_type] += 1
+    if counts != _QUESTION_TYPE_COUNTS:
+        raise ValueError(f"岗位「{title}」题型数量必须为 通用2/专业3/情景1，当前={counts}")
 
 
 def _ensure_seed_students(db) -> dict:
@@ -125,6 +147,7 @@ def import_seeds(seed_path=None, db=None) -> dict:
             terms_json = item.get("terms_json")
             dims_json = item.get("dims_json")
             _validate_dims_json(dims_json, title)
+            _validate_questions(item.get("questions"), title)
 
             job = db.query(Job).filter(Job.family == family, Job.title == title).first()
             if job is None:
