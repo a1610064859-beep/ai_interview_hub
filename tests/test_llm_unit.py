@@ -198,9 +198,69 @@ def test_timeout_forwarded_and_stage_selection(monkeypatch):
     asyncio.run(client.chat_json("orchestration", [], Out))
     assert seen_timeouts["local_m"] == pytest.approx(6.0, abs=0.1)
 
-    # scoring 阶段应传递完整的 60.0s 预算
+    # scoring 主模型最多占用一半阶段预算，给本地兜底留出时间
     asyncio.run(client.chat_json("scoring", [], Out))
-    assert seen_timeouts["flagship_m"] == pytest.approx(60.0, abs=0.1)
+    assert seen_timeouts["flagship_m"] == pytest.approx(30.0, abs=0.1)
+
+
+def test_local_uses_json_schema_response_format(monkeypatch, tmp_path):
+    formats = []
+
+    class FormatRecorder:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    formats.append(kwargs["response_format"])
+                    return FakeResp('{"value": "ok"}')
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FormatRecorder(**x))
+    client = LLMClient(make_settings(llm_usage_log_path=str(tmp_path / "usage.jsonl")))
+
+    result = asyncio.run(client.chat_json("followup", [], Out))
+
+    assert result.value == "ok"
+    assert formats == [
+        {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "Out",
+                "strict": True,
+                "schema": Out.model_json_schema(),
+            },
+        }
+    ]
+
+
+def test_scoring_primary_timeout_still_reaches_local_fallback(monkeypatch, tmp_path):
+    calls = []
+
+    class SlowFlagship:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    calls.append(kwargs["model"])
+                    if kwargs["model"] == "flagship_m":
+                        await asyncio.sleep(1)
+                    return FakeResp('{"value": "local_fallback_ok"}')
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: SlowFlagship(**x))
+    client = LLMClient(make_settings(
+        llm_scoring_timeout_s=0.2,
+        llm_usage_log_path=str(tmp_path / "usage.jsonl"),
+    ))
+
+    result = asyncio.run(client.chat_json("scoring", [], Out))
+
+    assert result.value == "local_fallback_ok"
+    assert calls == ["flagship_m", "local_m"]
 
 
 # E. 全链失败产生明确 LLMError

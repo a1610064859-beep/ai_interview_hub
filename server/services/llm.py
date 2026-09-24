@@ -82,15 +82,29 @@ class LLMClient:
 
                 client = None
                 try:
-                    # 单次尝试用满剩余预算，由外层 asyncio.timeout 统一裁剪；
-                    # 等分策略会把慢模型的单次尝试砍半（评分 30s÷2=15s < 实际耗时），
-                    # fallback 机会由快速失败（连接拒绝/4xx）保留，而非预留时间。
-                    attempt_timeout = max(0.001, deadline - time.monotonic())
+                    remaining = deadline - time.monotonic()
+                    attempt_timeout = remaining
+                    if stage == "scoring" and index == 0 and len(chain) > 1:
+                        # 主模型挂起时仍给本地评分留预算；主模型最多占 30 秒。
+                        primary_budget = min(30.0, self._timeout(stage) / 2)
+                        fallback_reserve = self._timeout(stage) - primary_budget
+                        attempt_timeout = min(primary_budget, remaining - fallback_reserve)
+                    attempt_timeout = max(0.001, attempt_timeout)
+                    response_format = {"type": "json_object"}
+                    if name == "local":
+                        response_format = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": response_model.__name__,
+                                "strict": True,
+                                "schema": response_model.model_json_schema(),
+                            },
+                        }
                     client = AsyncOpenAI(base_url=url, api_key=key, max_retries=0)
                     resp = await asyncio.wait_for(client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        response_format={"type": "json_object"},
+                        response_format=response_format,
                         timeout=attempt_timeout,
                     ), timeout=attempt_timeout)
                     # Non-streaming client: this is the first point at which response content is available.
