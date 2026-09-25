@@ -29,11 +29,11 @@
 - 音频转换：ffmpeg（webm/opus → 16k mono wav），Dockerfile 必须安装。
 - 部署形态：本机/局域网运行即可，不要求上云。
 
-## 5. 模型策略（延迟与质量分工）
+## 5. 模型策略（三档回退；2026-09-26 用户调整）
 ```
-编排/追问/新生模式：本地 Qwen3-30B-A3B(Ollama, OpenAI兼容端点) 为主，
-                    超时或不可用 → 云端 flash 档(DashScope qwen-flash)兜底
-评分/JD解析：       云端旗舰档为主 → 本地MoE兜底（质量优先，允许慢）
+所有 LLM 阶段（编排/追问/新生、评分/JD解析）：
+旗舰模型 → 普通云端 API（flash） → 本地模型。
+各阶段维持现有总超时，并为后续回退预留时间；模型、URL、密钥仍由 .env 配置。
 ```
 - `llm.chat_json()` 必须实现：timeout（编排类6s）、fallback 模型链、pydantic 校验失败自动重试1次、每次调用记录 {stage, model, ttft_ms, total_tokens} 到 usage 日志。
 - **所有降级必须静默可用**：追问判定失败=直接下一题；评分本地兜底成功=正常出报告。任何 LLM 故障都不允许 500 给前端。

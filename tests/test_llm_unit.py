@@ -66,7 +66,7 @@ def test_json_to_pydantic(monkeypatch):
     assert len(client.records) == 1
     rec = client.records[0]
     assert rec["stage"] == "orchestration"
-    assert rec["model"] == "local_m"
+    assert rec["model"] == "flagship_m"
     assert rec["success"] is True
     assert rec["error"] is None
     assert rec["total_tokens"] == 12
@@ -97,8 +97,8 @@ def test_validation_error_retry_once(monkeypatch):
 
     result = asyncio.run(client.chat_json("orchestration", [], Out))
     assert result.value == "retry_ok"
-    # 同一模型 local_m 调用了2次（初始+1次重试）
-    assert calls == ["local_m", "local_m"]
+    # 同一旗舰模型调用2次（初始+1次重试）
+    assert calls == ["flagship_m", "flagship_m"]
     # 恰好产生 2 条调用记录，无重复记录（Astra 反馈 4）
     assert len(client.records) == 2
     assert client.records[0]["success"] is False
@@ -111,11 +111,11 @@ def test_validation_error_retry_once(monkeypatch):
     assert client.records[1]["ttft_ms"] >= 0
 
 
-# C1. Fallback 成功：编排模式 local 失败重试1次后仍失败，fallback flash 成功
-def test_fallback_orchestration_local_to_flash(monkeypatch):
+# C1. Fallback 成功：编排模式旗舰失败重试1次后，普通云端 API 接管
+def test_fallback_orchestration_flagship_to_flash(monkeypatch):
     calls = []
 
-    class LocalFailFlashSuccess:
+    class FlagshipFailFlashSuccess:
         def __init__(self, **kwargs):
             pass
 
@@ -125,27 +125,26 @@ def test_fallback_orchestration_local_to_flash(monkeypatch):
                 async def create(**kwargs):
                     m = kwargs.get("model")
                     calls.append(m)
-                    if m == "local_m":
-                        # local 两次都返回非法结构
+                    if m == "flagship_m":
+                        # 旗舰两次都返回非法结构
                         return FakeResp('{"wrong": 1}', tokens=3)
                     # flash 返回合法数据
                     return FakeResp('{"value": "flash_ok"}', tokens=15)
 
-    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: LocalFailFlashSuccess(**x))
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FlagshipFailFlashSuccess(**x))
     client = LLMClient(make_settings())
 
     result = asyncio.run(client.chat_json("orchestration", [], Out))
     assert result.value == "flash_ok"
-    # local 失败 -> retry 1次 -> fallback flash 成功
-    assert calls == ["local_m", "local_m", "flash_m"]
+    assert calls == ["flagship_m", "flagship_m", "flash_m"]
     assert len(client.records) == 3
-    assert client.records[0]["model"] == "local_m" and client.records[0]["success"] is False
-    assert client.records[1]["model"] == "local_m" and client.records[1]["success"] is False
+    assert client.records[0]["model"] == "flagship_m" and client.records[0]["success"] is False
+    assert client.records[1]["model"] == "flagship_m" and client.records[1]["success"] is False
     assert client.records[2]["model"] == "flash_m" and client.records[2]["success"] is True
 
 
-# C2. Fallback 成功：评分模式 flagship 优先，flagship 失败，local 接管成功
-def test_scoring_flagship_first_and_local_fallback(monkeypatch):
+# C2. 旗舰和普通云端 API 都失败后，本地模型才接管评分
+def test_scoring_flagship_flash_then_local_fallback(monkeypatch):
     calls = []
 
     class FlagshipFailLocalSuccess:
@@ -158,8 +157,8 @@ def test_scoring_flagship_first_and_local_fallback(monkeypatch):
                 async def create(**kwargs):
                     m = kwargs.get("model")
                     calls.append(m)
-                    if m == "flagship_m":
-                        raise RuntimeError("flagship service unavailable")
+                    if m in {"flagship_m", "flash_m"}:
+                        raise RuntimeError("cloud service unavailable")
                     return FakeResp('{"value": "local_fallback_ok"}', tokens=20)
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FlagshipFailLocalSuccess(**x))
@@ -168,11 +167,12 @@ def test_scoring_flagship_first_and_local_fallback(monkeypatch):
     result = asyncio.run(client.chat_json("scoring", [], Out))
     assert result.value == "local_fallback_ok"
     # flagship 优先尝试，失败后 local 接管
-    assert calls == ["flagship_m", "local_m"]
-    assert len(client.records) == 2
+    assert calls == ["flagship_m", "flash_m", "local_m"]
+    assert len(client.records) == 3
     assert client.records[0]["model"] == "flagship_m" and client.records[0]["success"] is False
     assert client.records[0]["error"] == "RuntimeError"
-    assert client.records[1]["model"] == "local_m" and client.records[1]["success"] is True
+    assert client.records[1]["model"] == "flash_m" and client.records[1]["success"] is False
+    assert client.records[2]["model"] == "local_m" and client.records[2]["success"] is True
 
 
 # D. 分阶段 timeout 边界与选择测试
@@ -196,7 +196,7 @@ def test_timeout_forwarded_and_stage_selection(monkeypatch):
 
     # 单次请求使用剩余阶段预算；外层 deadline 负责总超时，SDK 禁止隐式重试
     asyncio.run(client.chat_json("orchestration", [], Out))
-    assert seen_timeouts["local_m"] == pytest.approx(6.0, abs=0.1)
+    assert seen_timeouts["flagship_m"] == pytest.approx(3.0, abs=0.1)
 
     # scoring 主模型最多占用一半阶段预算，给本地兜底留出时间
     asyncio.run(client.chat_json("scoring", [], Out))
@@ -218,7 +218,7 @@ def test_local_uses_json_schema_response_format(monkeypatch, tmp_path):
                     return FakeResp('{"value": "ok"}')
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: FormatRecorder(**x))
-    client = LLMClient(make_settings(llm_usage_log_path=str(tmp_path / "usage.jsonl")))
+    client = LLMClient(make_settings(flagship_model=None, flash_model=None, llm_usage_log_path=str(tmp_path / "usage.jsonl")))
 
     result = asyncio.run(client.chat_json("followup", [], Out))
 
@@ -249,6 +249,8 @@ def test_scoring_primary_timeout_still_reaches_local_fallback(monkeypatch, tmp_p
                     calls.append(kwargs["model"])
                     if kwargs["model"] == "flagship_m":
                         await asyncio.sleep(1)
+                    if kwargs["model"] == "flash_m":
+                        raise RuntimeError("flash unavailable")
                     return FakeResp('{"value": "local_fallback_ok"}')
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: SlowFlagship(**x))
@@ -260,7 +262,7 @@ def test_scoring_primary_timeout_still_reaches_local_fallback(monkeypatch, tmp_p
     result = asyncio.run(client.chat_json("scoring", [], Out))
 
     assert result.value == "local_fallback_ok"
-    assert calls == ["flagship_m", "local_m"]
+    assert calls == ["flagship_m", "flash_m", "local_m"]
 
 
 # E. 全链失败产生明确 LLMError
@@ -311,8 +313,8 @@ def test_usage_logging_fields_and_persistence_memory_success(monkeypatch):
                 @staticmethod
                 async def create(**kwargs):
                     m = kwargs.get("model")
-                    if m == "local_m":
-                        raise TimeoutError("timeout on local")
+                    if m == "flagship_m":
+                        raise TimeoutError("timeout on flagship")
                     return FakeResp('{"value": "ok"}', tokens=42)
 
     monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: MixedOutcome(**x))
@@ -346,7 +348,7 @@ def test_usage_logging_fields_and_persistence_memory_success(monkeypatch):
     # 2. 内存捕获验证写入内容（无磁盘读取）
     assert len(written_lines) == 2
     loaded = [json.loads(line) for line in written_lines]
-    assert loaded[0]["model"] == "local_m" and loaded[0]["success"] is False
+    assert loaded[0]["model"] == "flagship_m" and loaded[0]["success"] is False
     assert loaded[0]["ttft_ms"] is None
     assert loaded[1]["model"] == "flash_m" and loaded[1]["success"] is True
     assert loaded[1]["ttft_ms"] >= 0
@@ -428,9 +430,9 @@ def test_missing_config_no_duplicate_records():
     with pytest.raises(LLMError, match="all llm attempts failed"):
         asyncio.run(client.chat_json("orchestration", [], Out))
 
-    # local 和 flash 各产生 1 条 missing_config 记录，绝不重复
-    assert len(client.records) == 2
-    assert [r["error"] for r in client.records] == ["missing_config", "missing_config"]
+    # 三个模型各产生 1 条 missing_config 记录，绝不重复
+    assert len(client.records) == 3
+    assert [r["error"] for r in client.records] == ["missing_config"] * 3
     assert all(r["ttft_ms"] is None for r in client.records)
 
 

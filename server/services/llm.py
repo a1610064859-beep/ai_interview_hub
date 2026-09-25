@@ -36,13 +36,9 @@ class LLMClient:
                 )
 
     def _chain(self, stage: str):
-        if stage in {"orchestration", "followup", "new_student", "counsel"}:
-            return [
-                ("local", getattr(self.settings, "local_model", None), getattr(self.settings, "local_base_url", None), getattr(self.settings, "local_api_key", None)),
-                ("flash", getattr(self.settings, "flash_model", None), getattr(self.settings, "flash_base_url", None), getattr(self.settings, "flash_api_key", None)),
-            ]
         return [
             ("flagship", getattr(self.settings, "flagship_model", None), getattr(self.settings, "flagship_base_url", None), getattr(self.settings, "flagship_api_key", None)),
+            ("flash", getattr(self.settings, "flash_model", None), getattr(self.settings, "flash_base_url", None), getattr(self.settings, "flash_api_key", None)),
             ("local", getattr(self.settings, "local_model", None), getattr(self.settings, "local_base_url", None), getattr(self.settings, "local_api_key", None)),
         ]
 
@@ -84,11 +80,13 @@ class LLMClient:
                 try:
                     remaining = deadline - time.monotonic()
                     attempt_timeout = remaining
-                    if stage == "scoring" and index == 0 and len(chain) > 1:
-                        # 主模型挂起时仍给本地评分留预算；主模型最多占 30 秒。
-                        primary_budget = min(30.0, self._timeout(stage) / 2)
-                        fallback_reserve = self._timeout(stage) - primary_budget
-                        attempt_timeout = min(primary_budget, remaining - fallback_reserve)
+                    if index < len(chain) - 1:
+                        # 旗舰 / 普通云端 / 本地按 1/2、1/3、1/6 分配阶段预算；
+                        # 前一模型挂起时仍给后续模型留时间。
+                        shares = (0.5, 1 / 3, 1 / 6)
+                        total_budget = self._timeout(stage)
+                        fallback_reserve = total_budget * sum(shares[index + 1:])
+                        attempt_timeout = min(total_budget * shares[index], remaining - fallback_reserve)
                     attempt_timeout = max(0.001, attempt_timeout)
                     response_format = {"type": "json_object"}
                     if name == "local":
