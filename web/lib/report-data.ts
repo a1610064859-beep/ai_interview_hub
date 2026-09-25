@@ -143,6 +143,7 @@ export function parseReportResponse(raw: unknown): ReportData {
 
 export function transformDimensionsToRadar(
   dimensions: Record<string, DimensionData>,
+  theme: "day" | "night" = "night",
 ): RadarTransformResult {
   const validDims = REQUIRED_DIMENSIONS.filter((key) => {
     const d = dimensions[key];
@@ -158,11 +159,14 @@ export function transformDimensionsToRadar(
     };
   }
 
+  const isDay = theme === "day";
+  const labelColor = isDay ? "#626b7d" : "#94A3B8";
+  const gridColor = isDay ? "rgba(105, 84, 190, 0.2)" : "rgba(51, 65, 85, 0.5)";
   const indicators = validDims.map((key) => ({
     name: DIMENSION_LABEL_MAP[key],
     max: 100,
     min: 0,
-    color: "#94A3B8",
+    color: labelColor,
   }));
   const values = validDims.map((key) => dimensions[key].score as number);
 
@@ -170,35 +174,35 @@ export function transformDimensionsToRadar(
     backgroundColor: "transparent",
     tooltip: {
       trigger: "item",
-      backgroundColor: "rgba(15, 23, 42, 0.9)",
-      borderColor: "rgba(6, 182, 212, 0.4)",
-      textStyle: { color: "#F8FAFC" },
+      backgroundColor: isDay ? "rgba(255, 255, 255, 0.96)" : "rgba(15, 23, 42, 0.9)",
+      borderColor: isDay ? "rgba(112, 83, 239, 0.35)" : "rgba(6, 182, 212, 0.4)",
+      textStyle: { color: isDay ? "#24243a" : "#F8FAFC" },
     },
     radar: {
       indicator: indicators,
       shape: "polygon",
       splitNumber: 4,
       axisName: {
-        color: "#94A3B8",
+        color: labelColor,
         fontSize: 12,
         fontWeight: "bold",
       },
       splitLine: {
-        lineStyle: { color: "rgba(51, 65, 85, 0.5)" },
+        lineStyle: { color: gridColor },
       },
       splitArea: {
         show: true,
         areaStyle: {
           color: [
-            "rgba(15, 23, 42, 0.4)",
-            "rgba(30, 41, 59, 0.4)",
-            "rgba(15, 23, 42, 0.4)",
-            "rgba(30, 41, 59, 0.6)",
+            isDay ? "rgba(112, 83, 239, 0.025)" : "rgba(15, 23, 42, 0.4)",
+            isDay ? "rgba(238, 91, 190, 0.035)" : "rgba(30, 41, 59, 0.4)",
+            isDay ? "rgba(112, 83, 239, 0.025)" : "rgba(15, 23, 42, 0.4)",
+            isDay ? "rgba(238, 91, 190, 0.045)" : "rgba(30, 41, 59, 0.6)",
           ],
         },
       },
       axisLine: {
-        lineStyle: { color: "rgba(51, 65, 85, 0.6)" },
+        lineStyle: { color: isDay ? "rgba(105, 84, 190, 0.28)" : "rgba(51, 65, 85, 0.6)" },
       },
     },
     series: [
@@ -212,18 +216,18 @@ export function transformDimensionsToRadar(
             symbol: "circle",
             symbolSize: 6,
             itemStyle: {
-              color: "#06B6D4",
+              color: isDay ? "#7658ed" : "#06B6D4",
               borderColor: "#FFFFFF",
               borderWidth: 1.5,
             },
             lineStyle: {
-              color: "#06B6D4",
+              color: isDay ? "#7658ed" : "#06B6D4",
               width: 2.5,
-              shadowColor: "rgba(6, 182, 212, 0.5)",
+              shadowColor: isDay ? "rgba(118, 88, 237, 0.34)" : "rgba(6, 182, 212, 0.5)",
               shadowBlur: 10,
             },
             areaStyle: {
-              color: "rgba(6, 182, 212, 0.28)",
+              color: isDay ? "rgba(118, 88, 237, 0.22)" : "rgba(6, 182, 212, 0.28)",
             },
           },
         ],

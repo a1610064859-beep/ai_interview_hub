@@ -4,6 +4,7 @@ import * as echarts from "echarts";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppTheme } from "../../../components/theme-provider";
 
 import {
   buildGrowthHref,
@@ -264,7 +265,8 @@ function ReportView({
   report: ReportData;
   growthHref: string;
 }) {
-  const radar = useMemo(() => transformDimensionsToRadar(report.dimensions), [report.dimensions]);
+  const { theme } = useAppTheme();
+  const radar = useMemo(() => transformDimensionsToRadar(report.dimensions, theme), [report.dimensions, theme]);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
 

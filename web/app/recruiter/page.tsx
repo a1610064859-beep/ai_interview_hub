@@ -3,6 +3,7 @@
 import * as echarts from "echarts";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppTheme } from "../../components/theme-provider";
 import { sortCandidatesByEducation } from "../../lib/candidate-sort";
 
 import {
@@ -223,6 +224,7 @@ function parseCandidatesPayload(payload: unknown): CandidatesPayload {
 }
 
 export default function RecruiterPage() {
+  const { theme } = useAppTheme();
   const [jobs, setJobs] = useState<JobOption[]>([]);
   const [jobId, setJobId] = useState<number | null>(null);
   const [discover, setDiscover] = useState<CandidatesPayload | null>(null);
@@ -532,7 +534,7 @@ export default function RecruiterPage() {
       return;
     }
     const chartElement = chartRef.current;
-    const radar = transformDimensionsToRadar(selected.dimensions);
+    const radar = transformDimensionsToRadar(selected.dimensions, theme);
     if (!radar.canRenderRadar || !radar.radarOptions) {
       chartInstance.current?.clear();
       return;
@@ -544,7 +546,7 @@ export default function RecruiterPage() {
     const observer = new ResizeObserver(() => chartInstance.current?.resize());
     observer.observe(chartElement);
     return () => observer.disconnect();
-  }, [selected]);
+  }, [selected, theme]);
 
   async function runParse() {
     if (jobId === null) return;

@@ -74,7 +74,7 @@ export default function AuthScreen({ initialRegister = false }: { initialRegiste
 
   return (
     <main className="grid min-h-dvh place-items-center bg-[#050912] px-4 py-8 text-[#d7e3f7]">
-      <section className="w-full max-w-lg rounded-3xl border border-[#2f6fed]/60 bg-[#0c1730]/95 p-5 shadow-[0_0_32px_rgba(47,111,237,0.22)] sm:p-8">
+      <section className="auth-screen-panel w-full max-w-lg rounded-3xl border border-[#2f6fed]/60 bg-[#0c1730]/95 p-5 shadow-[0_0_32px_rgba(47,111,237,0.22)] sm:p-8">
         <p className="text-xs tracking-[0.2em] text-[#7eb6ff]">AI INTERVIEW HUB · SECURE ACCESS</p>
         <h1 className="mt-3 text-2xl font-semibold text-white">{initialRegister ? "创建账号" : "登录面试仓"}</h1>
         <p className="mt-2 text-sm text-[#9fb4d4]">学生训练记录按本人账号隔离，企业功能仅企业账号可访问。</p>
@@ -150,7 +150,7 @@ export default function AuthScreen({ initialRegister = false }: { initialRegiste
           ) : null}
 
           {error ? <p className="rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-3 py-2 text-sm text-[#ffd0a8]" role="alert">{error}</p> : null}
-          <button type="submit" disabled={busy} className="w-full rounded-full bg-[#ff8a2a] px-4 py-3 font-semibold text-[#1a0d04] disabled:opacity-50">
+          <button type="submit" disabled={busy} className="auth-primary w-full rounded-full bg-[#ff8a2a] px-4 py-3 font-semibold text-[#1a0d04] disabled:opacity-50">
             {busy ? "正在处理…" : initialRegister ? "注册并进入" : "登录"}
           </button>
         </form>

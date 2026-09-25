@@ -74,6 +74,14 @@ describe("transformDimensionsToRadar", () => {
     assert.equal(indicator.length, 4);
   });
 
+  it("日间主题使用高对比轴标签与紫色雷达线", () => {
+    const result = transformDimensionsToRadar(baseDimensions(), "day");
+    const radar = result.radarOptions!.radar as { axisName: { color: string } };
+    const series = result.radarOptions!.series as { data: { lineStyle: { color: string } }[] }[];
+    assert.equal(radar.axisName.color, "#626b7d");
+    assert.equal(series[0].data[0].lineStyle.color, "#7658ed");
+  });
+
   it("R-T02: 文本模式剔除 expression_fluency，不补 0", () => {
     const result = transformDimensionsToRadar(
       baseDimensions({
@@ -359,6 +367,15 @@ describe("growth-data null / connectNulls / incomparable", () => {
     assert.equal(assertLineOptionsNoZeroFill(options), true);
     assert.equal(lineSeriesHasNullNotZero(options, "表达流畅度", 0), true);
     assert.equal((options._meta as { connectNulls: boolean }).connectNulls, false);
+  });
+
+  it("成长趋势日间配色使用深色标签与浅色提示卡", () => {
+    const options = transformTrendToLineOptions(parseGrowthTrendResponse(trendPayload()), [], "day");
+    const yAxis = options.yAxis as { axisLabel: { color: string } };
+    const tooltip = options.tooltip as { backgroundColor: string; textStyle: { color: string } };
+    assert.equal(yAxis.axisLabel.color, "#626b7d");
+    assert.equal(tooltip.backgroundColor, "rgba(255, 255, 255, 0.96)");
+    assert.equal(tooltip.textStyle.color, "#24243a");
   });
 
   it("G-T05: 文本/语音不可比、版本不同、维度集合不同", () => {

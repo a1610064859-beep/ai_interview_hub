@@ -4,6 +4,7 @@ import * as echarts from "echarts";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppTheme } from "../../components/theme-provider";
 
 import {
   buildGrowthHref,
@@ -65,6 +66,7 @@ async function readApiError(response: Response): Promise<string> {
 }
 
 function GrowthPageInner() {
+  const { theme } = useAppTheme();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [bootstrap, setBootstrap] = useState<PageState>({ kind: "loading" });
@@ -194,8 +196,8 @@ function GrowthPageInner() {
 
   const chartOptions = useMemo(() => {
     if (!trend || trend.points.length === 0) return null;
-    return transformTrendToLineOptions(trend, history?.records ?? []);
-  }, [trend, history]);
+    return transformTrendToLineOptions(trend, history?.records ?? [], theme);
+  }, [trend, history, theme]);
 
   useEffect(() => {
     if (!chartRef.current || !chartOptions) {

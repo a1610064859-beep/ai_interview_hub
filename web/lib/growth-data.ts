@@ -604,7 +604,10 @@ function parseCohortKey(key: string): {
 export function transformTrendToLineOptions(
   trend: GrowthTrendData,
   historyRecords: GrowthHistoryRecord[] = [],
+  theme: "day" | "night" = "night",
 ): Record<string, unknown> {
+  const labelColor = theme === "day" ? "#626b7d" : "#9fb4d4";
+  const gridColor = theme === "day" ? "rgba(105, 84, 190, 0.18)" : "rgba(47,111,237,0.2)";
   const connectNulls = false;
   const timeline = buildTimeline(trend, historyRecords);
   const categories = timeline.map((p) => `#${p.sessionId}`);
@@ -612,13 +615,18 @@ export function transformTrendToLineOptions(
   const multiCohort = cohortKeys.length > 1;
 
   const baseChart = {
-    tooltip: { trigger: "axis" },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: theme === "day" ? "rgba(255, 255, 255, 0.96)" : "rgba(15, 23, 42, 0.92)",
+      borderColor: theme === "day" ? "rgba(112, 83, 239, 0.28)" : "rgba(47,111,237,0.28)",
+      textStyle: { color: theme === "day" ? "#24243a" : "#e7ecfb" },
+    },
     yAxis: {
       type: "value",
       min: 0,
       max: 100,
-      axisLabel: { color: "#9fb4d4" },
-      splitLine: { lineStyle: { color: "rgba(47,111,237,0.2)" } },
+      axisLabel: { color: labelColor },
+      splitLine: { lineStyle: { color: gridColor } },
     },
   };
 
@@ -633,12 +641,12 @@ export function transformTrendToLineOptions(
       ...baseChart,
       legend: {
         data: ["综合分", ...REQUIRED_DIMENSIONS.map((k) => DIMENSION_LABEL_MAP[k])],
-        textStyle: { color: "#9fb4d4" },
+        textStyle: { color: labelColor },
       },
       xAxis: {
         type: "category",
         data: categories,
-        axisLabel: { color: "#9fb4d4" },
+        axisLabel: { color: labelColor },
       },
       series: [
         {
@@ -698,11 +706,11 @@ export function transformTrendToLineOptions(
 
   return {
     ...baseChart,
-    legend: { data: legendData, textStyle: { color: "#9fb4d4" } },
+    legend: { data: legendData, textStyle: { color: labelColor } },
     xAxis: {
       type: "category",
       data: categories,
-      axisLabel: { color: "#9fb4d4" },
+      axisLabel: { color: labelColor },
     },
     series,
     _meta: {
