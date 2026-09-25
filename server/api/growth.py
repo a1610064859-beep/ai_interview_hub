@@ -37,6 +37,9 @@ def list_students():
                     "name_masked": u.name_masked,
                     "major": u.major,
                     "grade": u.grade,
+                    "student_no": u.student_no,
+                    "education_level": u.education_level,
+                    "has_resume": bool(u.resume_storage_key),
                 }
                 for u in students
             ]

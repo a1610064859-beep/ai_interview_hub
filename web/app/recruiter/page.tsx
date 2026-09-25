@@ -3,6 +3,7 @@
 import * as echarts from "echarts";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { sortCandidatesByEducation } from "../../lib/candidate-sort";
 
 import {
   DIMENSION_LABEL_MAP,
@@ -21,6 +22,8 @@ type Candidate = {
   name_masked: string | null;
   major: string | null;
   grade: string | null;
+  student_no: string | null;
+  education_level: string | null;
   session_id: number;
   report_id: number;
   job_id: number;
@@ -32,6 +35,22 @@ type Candidate = {
   valid_dim_count: number;
   dimensions: Record<DimensionKey, DimensionData>;
   report_path: string;
+};
+
+type StudentOption = {
+  id: number;
+  student_no: string | null;
+  name_masked: string | null;
+  major: string | null;
+  grade: string | null;
+  education_level: string | null;
+};
+
+type StudentProfile = StudentOption & {
+  internship_experience: string | null;
+  awards: string | null;
+  has_resume: boolean;
+  resume_filename: string | null;
 };
 
 type CandidatesPayload = {
@@ -152,6 +171,8 @@ function parseCandidatesPayload(payload: unknown): CandidatesPayload {
       name_masked: typeof raw.name_masked === "string" ? raw.name_masked : null,
       major: typeof raw.major === "string" ? raw.major : null,
       grade: typeof raw.grade === "string" ? raw.grade : null,
+      student_no: typeof raw.student_no === "string" ? raw.student_no : null,
+      education_level: typeof raw.education_level === "string" ? raw.education_level : null,
       session_id: Number(raw.session_id),
       report_id: Number(raw.report_id),
       job_id: Number(raw.job_id),
@@ -204,6 +225,17 @@ export default function RecruiterPage() {
   const [parseDraft, setParseDraft] = useState<ParseDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [students, setStudents] = useState<StudentOption[]>([]);
+  const [profileId, setProfileId] = useState<number | null>(null);
+  const [profile, setProfile] = useState<StudentProfile | null>(null);
+  const [profileRevision, setProfileRevision] = useState(0);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [resumeFiles, setResumeFiles] = useState<File[]>([]);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [sortMode, setSortMode] = useState<"score" | "education_desc" | "education_asc">("score");
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
+  const resumeInputRef = useRef<HTMLInputElement | null>(null);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
 
@@ -225,6 +257,28 @@ export default function RecruiterPage() {
       cancelled = true;
     };
   }, []);
+
+  const loadStudents = useCallback(async () => {
+    const resp = await fetch("/api/students");
+    if (!resp.ok) throw new Error(await readApiError(resp));
+    const payload: unknown = await resp.json();
+    if (!isRecord(payload) || !Array.isArray(payload.students)) throw new Error("学生名单响应非法");
+    setStudents(payload.students.map((raw: unknown) => {
+      if (!isRecord(raw) || !Number.isInteger(raw.id)) throw new Error("学生档案响应非法");
+      return {
+        id: Number(raw.id),
+        student_no: typeof raw.student_no === "string" ? raw.student_no : null,
+        name_masked: typeof raw.name_masked === "string" ? raw.name_masked : null,
+        major: typeof raw.major === "string" ? raw.major : null,
+        grade: typeof raw.grade === "string" ? raw.grade : null,
+        education_level: typeof raw.education_level === "string" ? raw.education_level : null,
+      };
+    }));
+  }, []);
+
+  useEffect(() => {
+    void loadStudents().catch((e) => setError(e instanceof Error ? e.message : "加载学生名单失败"));
+  }, [loadStudents]);
 
   const loadDiscover = useCallback(async (jid: number) => {
     setBusy(true);
@@ -283,6 +337,44 @@ export default function RecruiterPage() {
     return list.candidates.find((c) => c.user_id === selectedUserId) ?? null;
   }, [list, selectedUserId]);
 
+  const visibleCandidates = useMemo(() => {
+    const candidates = list?.candidates ?? [];
+    if (sortMode === "score") return candidates;
+    return sortCandidatesByEducation(candidates, sortMode === "education_desc" ? "desc" : "asc");
+  }, [list, sortMode]);
+
+  useEffect(() => {
+    if (profileId === null) {
+      setProfile(null);
+      return;
+    }
+    let cancelled = false;
+    setProfile(null);
+    (async () => {
+      try {
+        const resp = await fetch(`/api/recruiter/students/${profileId}`);
+        if (!resp.ok) throw new Error(await readApiError(resp));
+        const raw: unknown = await resp.json();
+        if (!isRecord(raw) || !Number.isInteger(raw.id)) throw new Error("学生档案响应非法");
+        if (!cancelled) setProfile({
+          id: Number(raw.id),
+          student_no: typeof raw.student_no === "string" ? raw.student_no : null,
+          name_masked: typeof raw.name_masked === "string" ? raw.name_masked : null,
+          major: typeof raw.major === "string" ? raw.major : null,
+          grade: typeof raw.grade === "string" ? raw.grade : null,
+          education_level: typeof raw.education_level === "string" ? raw.education_level : null,
+          internship_experience: typeof raw.internship_experience === "string" ? raw.internship_experience : null,
+          awards: typeof raw.awards === "string" ? raw.awards : null,
+          has_resume: raw.has_resume === true,
+          resume_filename: typeof raw.resume_filename === "string" ? raw.resume_filename : null,
+        });
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "加载学生档案失败");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profileId, profileRevision]);
+
   useEffect(() => {
     if (!selected || !chartRef.current) {
       chartInstance.current?.dispose();
@@ -338,6 +430,34 @@ export default function RecruiterPage() {
     }
   }
 
+  async function runImport() {
+    if (!csvFile || importBusy) return;
+    setImportBusy(true);
+    setImportMessage(null);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("csv_file", csvFile);
+      for (const file of resumeFiles) form.append("resumes", file);
+      const resp = await fetch("/api/recruiter/students/import", { method: "POST", body: form });
+      if (!resp.ok) throw new Error(await readApiError(resp));
+      const result: unknown = await resp.json();
+      if (!isRecord(result)) throw new Error("导入结果非法");
+      setImportMessage(`导入完成：新增 ${Number(result.created)} 人，更新 ${Number(result.updated)} 人。`);
+      setCsvFile(null);
+      setResumeFiles([]);
+      if (csvInputRef.current) csvInputRef.current.value = "";
+      if (resumeInputRef.current) resumeInputRef.current.value = "";
+      await loadStudents();
+      setProfileRevision((revision) => revision + 1);
+      if (selectedCohortKey) await loadCandidates();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "学生名单导入失败");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   const emptyHint = (() => {
     if (discover?.weights_error) {
       return `权重配置非法（${discover.weights_error}）：请检查岗位 dims_json，禁止使用内置兜底权重。`;
@@ -376,6 +496,46 @@ export default function RecruiterPage() {
           {error}
         </p>
       ) : null}
+
+      <section className="mb-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
+        <h2 className="text-lg text-white">学生档案与名单导入</h2>
+        <p className="mt-1 text-sm text-[#9fb4d4]">
+          下载固定 CSV 模板，填写脱敏姓名及学生编号；如填写简历文件名，同时选择同名的 .docx 或 .pdf 文件。重复编号更新档案，未完成训练的学生不会进入候选榜。
+        </p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-4">
+            <a href="/api/recruiter/students/template.csv" download className="text-sm text-[#7eb6ff] underline">
+              下载 CSV 模板
+            </a>
+            <label className="mt-3 block text-sm text-[#9fb4d4]">
+              选择学生名单 CSV
+              <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="mt-2 block w-full text-xs text-white" onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)} />
+            </label>
+            <label className="mt-3 block text-sm text-[#9fb4d4]">
+              选择简历文件（可多选）
+              <input ref={resumeInputRef} type="file" multiple accept=".docx,.pdf" className="mt-2 block w-full text-xs text-white" onChange={(e) => setResumeFiles(Array.from(e.target.files ?? []))} />
+            </label>
+            <button type="button" disabled={!csvFile || importBusy} onClick={() => void runImport()} className="mt-4 rounded-full bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:opacity-50">
+              {importBusy ? "正在导入…" : "一键导入名单"}
+            </button>
+            {importMessage ? <p className="mt-2 text-sm text-emerald-300" role="status">{importMessage}</p> : null}
+          </div>
+          <div className="rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-4">
+            <label className="block text-sm text-[#9fb4d4]">
+              查看学生档案（共 {students.length} 人）
+              <select className="mt-2 w-full rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={profileId ?? ""} onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">请选择学生</option>
+                {students.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.student_no ?? `#${student.id}`} · {student.name_masked ?? "未填姓名"} · {student.major ?? "专业未填"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="mt-3 text-xs text-[#9fb4d4]">候选榜继续只使用同岗位、同评分口径的真实面试报告；导入的档案不会生成虚构分数。</p>
+          </div>
+        </div>
+      </section>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_minmax(280px,320px)]">
         <section className="rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
@@ -428,6 +588,14 @@ export default function RecruiterPage() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg text-white">候选列表</h2>
             <label className="flex items-center gap-2 text-sm text-[#9fb4d4]">
+              排序
+              <select className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
+                <option value="score">岗位加权分</option>
+                <option value="education_desc">学历：高到低</option>
+                <option value="education_asc">学历：低到高</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-[#9fb4d4]">
               评分口径
               <select
                 className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
@@ -453,11 +621,11 @@ export default function RecruiterPage() {
             </p>
           ) : (
             <ul className="space-y-3">
-              {(list?.candidates ?? []).map((c) => (
+              {visibleCandidates.map((c) => (
                 <li key={c.user_id}>
                   <button
                     type="button"
-                    onClick={() => setSelectedUserId(c.user_id)}
+                    onClick={() => { setSelectedUserId(c.user_id); setProfileId(c.user_id); }}
                     className={`w-full rounded-xl border px-4 py-3 text-left transition ${
                       selectedUserId === c.user_id
                         ? "border-[#ff8a2a] bg-[#1a1208]"
@@ -468,7 +636,7 @@ export default function RecruiterPage() {
                       <div>
                         <p className="text-white">{c.name_masked ?? `学生#${c.user_id}`}</p>
                         <p className="text-xs text-[#9fb4d4]">
-                          {c.major ?? "专业未填"} · {c.grade ?? "年级未填"} · sid={c.session_id}
+                          {c.major ?? "专业未填"} · {c.grade ?? "年级未填"} · {c.education_level ?? "学历未填"} · sid={c.session_id}
                         </p>
                       </div>
                       <div className="text-right text-sm">
@@ -529,6 +697,27 @@ export default function RecruiterPage() {
           ) : (
             <p className="mt-6 text-sm text-[#9fb4d4]">选择候选人后显示四维雷达；null 维不补零。</p>
           )}
+          <div className="mt-5 border-t border-[#2f6fed]/40 pt-4">
+            <h3 className="text-base text-white">学生信息</h3>
+            {profile ? (
+              <dl className="mt-3 space-y-3 text-sm">
+                <div><dt className="text-[#9fb4d4]">姓名 / 学生编号</dt><dd className="text-white">{profile.name_masked ?? "未填写"} / {profile.student_no ?? `#${profile.id}`}</dd></div>
+                <div><dt className="text-[#9fb4d4]">专业 / 年级 / 学历</dt><dd className="text-white">{profile.major ?? "未填写"} / {profile.grade ?? "未填写"} / {profile.education_level ?? "未填写"}</dd></div>
+                <div><dt className="text-[#9fb4d4]">实习经历</dt><dd className="whitespace-pre-wrap text-white">{profile.internship_experience ?? "未填写"}</dd></div>
+                <div><dt className="text-[#9fb4d4]">获奖情况</dt><dd className="whitespace-pre-wrap text-white">{profile.awards ?? "未填写"}</dd></div>
+                <div>
+                  <dt className="text-[#9fb4d4]">简历</dt>
+                  <dd>
+                    {profile.has_resume ? (
+                      <a href={`/api/recruiter/students/${profile.id}/resume`} target="_blank" rel="noopener noreferrer" className="text-[#7eb6ff] underline">
+                        查看 / 下载 {profile.resume_filename ?? "简历"}
+                      </a>
+                    ) : <span className="text-white">未上传</span>}
+                  </dd>
+                </div>
+              </dl>
+            ) : <p className="mt-2 text-sm text-[#9fb4d4]">{profileId === null ? "从名单或候选列表选择学生。" : "正在读取档案…"}</p>}
+          </div>
         </section>
       </div>
     </main>

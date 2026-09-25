@@ -197,6 +197,8 @@ def build_candidate_item(
         "name_masked": user.name_masked,
         "major": user.major,
         "grade": user.grade,
+        "student_no": user.student_no,
+        "education_level": user.education_level,
         "session_id": sess.id,
         "report_id": report.id,
         "job_id": sess.job_id,

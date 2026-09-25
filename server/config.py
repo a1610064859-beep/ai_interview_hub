@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_env: str = Field("development", validation_alias=AliasChoices("APP_ENV", "app_env"))
     database_url: str = Field("sqlite:///./data/interview.db", validation_alias=AliasChoices("DATABASE_URL", "database_url"))
+    resume_upload_dir: str = Field("data/resumes", validation_alias=AliasChoices("RESUME_UPLOAD_DIR", "resume_upload_dir"))
     llm_orchestration_timeout_s: float = Field(6.0, validation_alias=AliasChoices("LLM_ORCHESTRATION_TIMEOUT_S", "llm_orchestration_timeout_s"))
     llm_scoring_timeout_s: float = Field(60.0, validation_alias=AliasChoices("LLM_SCORING_TIMEOUT_S", "llm_scoring_timeout_s"))
     llm_usage_log_path: str = Field("logs/llm_usage.jsonl", validation_alias=AliasChoices("LLM_USAGE_LOG_PATH", "llm_usage_log_path"))

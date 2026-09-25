@@ -89,10 +89,25 @@ class StudentItem(BaseModel):
     name_masked: str | None = None
     major: str | None = None
     grade: str | None = None
+    student_no: str | None = None
+    education_level: str | None = None
+    has_resume: bool = False
 
 
 class StudentListResponse(BaseModel):
     students: list[StudentItem]
+
+
+class StudentProfileResponse(StudentItem):
+    internship_experience: str | None = None
+    awards: str | None = None
+    resume_filename: str | None = None
+
+
+class StudentImportResponse(BaseModel):
+    created: int
+    updated: int
+    total: int
 
 
 class GrowthHistoryRecord(BaseModel):
@@ -210,6 +225,8 @@ class CandidateItem(BaseModel):
     name_masked: str | None = None
     major: str | None = None
     grade: str | None = None
+    student_no: str | None = None
+    education_level: str | None = None
     session_id: int
     report_id: int
     job_id: int

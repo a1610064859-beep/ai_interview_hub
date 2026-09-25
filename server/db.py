@@ -27,6 +27,23 @@ class Base(DeclarativeBase):
 def ensure_schema_upgrades(target_engine=None):
     use_engine = target_engine or engine
     with use_engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(users)"))
+        user_cols = {row[1] for row in result.fetchall()}
+        if user_cols:
+            add_student_no = "student_no" not in user_cols
+            for name, column_type in (
+                ("student_no", "VARCHAR(64)"),
+                ("education_level", "VARCHAR(32)"),
+                ("internship_experience", "TEXT"),
+                ("awards", "TEXT"),
+                ("resume_storage_key", "VARCHAR(80)"),
+                ("resume_original_name", "VARCHAR(255)"),
+            ):
+                if name not in user_cols:
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {column_type}"))
+            if add_student_no:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_student_no ON users(student_no)"))
+
         result = conn.execute(text("PRAGMA table_info(sessions)"))
         cols = {row[1] for row in result.fetchall()}
         if cols:

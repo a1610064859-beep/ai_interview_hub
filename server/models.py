@@ -10,6 +10,12 @@ class User(Base):
     name_masked: Mapped[str|None]=mapped_column(String(128), nullable=True)
     major: Mapped[str|None]=mapped_column(String(128), nullable=True)
     grade: Mapped[str|None]=mapped_column(String(64), nullable=True)
+    student_no: Mapped[str|None]=mapped_column(String(64), nullable=True, unique=True)
+    education_level: Mapped[str|None]=mapped_column(String(32), nullable=True)
+    internship_experience: Mapped[str|None]=mapped_column(Text, nullable=True)
+    awards: Mapped[str|None]=mapped_column(Text, nullable=True)
+    resume_storage_key: Mapped[str|None]=mapped_column(String(80), nullable=True)
+    resume_original_name: Mapped[str|None]=mapped_column(String(255), nullable=True)
 class Job(Base):
     __tablename__="jobs"
     id: Mapped[int]=mapped_column(Integer, primary_key=True)

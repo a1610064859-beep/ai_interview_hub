@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/report.test.ts tests/recorder.test.ts"
+    "test": "node --experimental-strip-types --test tests/report.test.ts tests/recorder.test.ts tests/candidate-sort.test.ts"
   },
   "dependencies": {
     "echarts": "5.6.0",

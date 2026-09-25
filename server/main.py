@@ -9,6 +9,7 @@ from server.api.sessions import router as sessions_router
 from server.api.reports import router as reports_router
 from server.api.growth import router as growth_router
 from server.api.recruiter import router as recruiter_router
+from server.api.student_roster import router as student_roster_router
 from server.api.counsel import router as counsel_router
 from server.config import settings
 from server.db import init_db
@@ -36,6 +37,7 @@ app.include_router(sessions_router)
 app.include_router(reports_router)
 app.include_router(growth_router)
 app.include_router(recruiter_router)
+app.include_router(student_roster_router)
 app.include_router(counsel_router)
 
 
