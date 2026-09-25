@@ -98,7 +98,8 @@ def test_new_session_starts_with_recently_added_general_questions(bank_client, b
         assert response.status_code == 201
 
     monkeypatch.setattr("server.api.sessions.SessionLocal", testing_session_local)
-    monkeypatch.setattr("server.api.sessions.tts.prefetch_session_questions", AsyncMock(return_value={}))
+    question_tts_mock = AsyncMock(return_value={})
+    monkeypatch.setattr("server.api.sessions.tts.prefetch_session_questions", question_tts_mock)
     monkeypatch.setattr("server.api.sessions.tts.prefetch_session_transitions", AsyncMock(return_value=[]))
     response = bank_client.post(
         "/api/sessions",
@@ -106,6 +107,7 @@ def test_new_session_starts_with_recently_added_general_questions(bank_client, b
     )
     assert response.status_code == 200
     assert response.json()["question"]["text"] == custom_texts[0]
+    assert question_tts_mock.await_args.args[1][:2] == custom_texts
 
 
 def test_custom_question_can_be_edited_and_removed_without_breaking_slots(bank_client, bank_db):
