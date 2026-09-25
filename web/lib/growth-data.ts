@@ -88,6 +88,13 @@ export const GROWTH_IDENTITY_STORAGE_KEY = "ai_interview_hub.interview_identity"
 
 export const AUDIENCE_MODES: readonly AudienceMode[] = ["毕业生", "新生"] as const;
 
+export function inferAudienceModeFromGrade(grade: string | null | undefined): AudienceMode {
+  const normalized = grade?.replace(/\s+/g, "") ?? "";
+  return /(毕业|应届|大[三四]|[三四]年级|毕业班|最后一年)/.test(normalized)
+    ? "毕业生"
+    : "新生";
+}
+
 export const COMPARISON_REASON_LABELS: Record<string, string> = {
   NO_RECORDS: "该岗位暂无已完成的训练记录",
   SINGLE_RECORD: "仅一次训练，暂无可比较的两次记录",

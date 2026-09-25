@@ -25,6 +25,7 @@ import {
   formatDeltaOrUnevaluated,
   formatScoreOrUnevaluated,
   getSeriesDataByName,
+  inferAudienceModeFromGrade,
   lineSeriesHasNullNotZero,
   parseGrowthHistoryResponse,
   parseGrowthTrendResponse,
@@ -303,6 +304,16 @@ function trendPayload(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("growth-data session create body", () => {
+  it("根据登录档案的年级自动推断面试模式", () => {
+    assert.equal(inferAudienceModeFromGrade("大二"), "新生");
+    assert.equal(inferAudienceModeFromGrade("高职二年级"), "新生");
+    assert.equal(inferAudienceModeFromGrade("硕士一年级"), "新生");
+    assert.equal(inferAudienceModeFromGrade("大专三年级"), "毕业生");
+    assert.equal(inferAudienceModeFromGrade("中职三年级"), "毕业生");
+    assert.equal(inferAudienceModeFromGrade("本科大三"), "毕业生");
+    assert.equal(inferAudienceModeFromGrade("应届毕业"), "毕业生");
+  });
+
   it("G-T01: 请求体精确包含 user_id/job_id/mode 三项必填", () => {
     const body = buildSessionCreateBody(3, 1, "毕业生");
     assert.deepEqual(Object.keys(body).sort(), ["job_id", "mode", "user_id"]);

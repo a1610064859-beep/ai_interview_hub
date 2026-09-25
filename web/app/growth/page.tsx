@@ -32,7 +32,6 @@ type PageState =
   | { kind: "error"; message: string }
   | {
       kind: "ready";
-      students: StudentProfile[];
       jobs: JobOption[];
     };
 
@@ -70,7 +69,7 @@ function GrowthPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [bootstrap, setBootstrap] = useState<PageState>({ kind: "loading" });
-  const [userId, setUserId] = useState<number | null>(() => parsePositiveInt(searchParams.get("user_id")));
+  const [userId, setUserId] = useState<number | null>(null);
   const [jobId, setJobId] = useState<number | null>(() => parsePositiveInt(searchParams.get("job_id")));
   const [history, setHistory] = useState<GrowthHistoryData | null>(null);
   const [trend, setTrend] = useState<GrowthTrendData | null>(null);
@@ -99,6 +98,7 @@ function GrowthPageInner() {
         const studentsJson: unknown = await studentsRes.json();
         const jobsJson: unknown = await jobsRes.json();
         const students = parseStudentsResponse(studentsJson);
+        const student = students[0] ?? null;
         if (
           typeof jobsJson !== "object" ||
           jobsJson === null ||
@@ -116,12 +116,8 @@ function GrowthPageInner() {
           jobs.push({ id: row.id, family: row.family, title: row.title });
         }
         const stored = loadInterviewIdentity();
-        setBootstrap({ kind: "ready", students, jobs });
-        setUserId((prev) => {
-          if (prev !== null) return prev;
-          if (stored && students.some((s) => s.id === stored.userId)) return stored.userId;
-          return students[0]?.id ?? null;
-        });
+        setBootstrap({ kind: "ready", jobs });
+        setUserId(student?.id ?? null);
         setJobId((prev) => {
           if (prev !== null) return prev;
           if (stored && jobs.some((j) => j.id === stored.jobId)) return stored.jobId;
@@ -144,7 +140,7 @@ function GrowthPageInner() {
     if (userId === null) {
       setHistory(null);
       setTrend(null);
-      setLoadError("请先选择学生档案");
+      setLoadError("无法读取当前登录学生信息，请重新登录后再试。");
       return;
     }
     setLoadingData(true);
@@ -231,7 +227,6 @@ function GrowthPageInner() {
     return <StatusCard title="成长舱初始化失败" detail={bootstrap.message} />;
   }
 
-  const selectedStudent = bootstrap.students.find((s) => s.id === userId) ?? null;
   const recordCount = history?.records.length ?? 0;
 
   return (
@@ -254,25 +249,7 @@ function GrowthPageInner() {
         </div>
       </header>
 
-      <section className="cabin-panel grid min-w-0 gap-4 p-4 md:grid-cols-2">
-        <label className="flex min-w-0 flex-col gap-2 text-sm text-slate-300">
-          学生档案
-          <select
-            className="rounded-xl border border-cyan-400/30 bg-slate-950 px-3 py-2 text-slate-100"
-            value={userId ?? ""}
-            onChange={(e) => {
-              const next = parsePositiveInt(e.target.value);
-              setUserId(next);
-            }}
-          >
-            {bootstrap.students.length === 0 ? <option value="">暂无学生档案</option> : null}
-            {bootstrap.students.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.nameMasked} · {s.major ?? "专业未填"} · {s.grade ?? "年级未填"}
-              </option>
-            ))}
-          </select>
-        </label>
+      <section className="cabin-panel grid min-w-0 gap-4 p-4">
         <label className="flex min-w-0 flex-col gap-2 text-sm text-slate-300">
           岗位筛选
           <select
@@ -292,13 +269,6 @@ function GrowthPageInner() {
           </select>
         </label>
       </section>
-
-      {selectedStudent ? (
-        <p className="text-sm text-slate-400">
-          当前学生：{selectedStudent.nameMasked}
-          {loadingData ? " · 加载中…" : null}
-        </p>
-      ) : null}
 
       {loadError ? (
         <div className="cabin-panel border border-orange-400/40 p-4 text-sm text-orange-200" role="alert">

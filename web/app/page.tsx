@@ -25,10 +25,9 @@ import {
   type ResolveOutcome,
 } from "../lib/session-recovery";
 import {
-  AUDIENCE_MODES,
   buildSessionCreateBody,
   canCreateSession,
-  loadInterviewIdentity,
+  inferAudienceModeFromGrade,
   parseStudentsResponse,
   persistInterviewIdentity,
   resolveReportHref,
@@ -127,9 +126,10 @@ export default function HomePage() {
   const voiceSubmitLockRef = useRef(false);
   const transitionTrackerRef = useRef(new TransitionAudioTracker());
   const recoveryAbortRef = useRef<AbortController | null>(null);
-  const [students, setStudents] = useState<StudentProfile[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-  const [audienceMode, setAudienceMode] = useState<AudienceMode | null>("毕业生");
+  const [currentStudent, setCurrentStudent] = useState<StudentProfile | null>(null);
+  const [audienceModeOverride, setAudienceModeOverride] = useState<AudienceMode | null>(null);
+  const currentStudentId = currentStudent?.id ?? null;
+  const audienceMode = audienceModeOverride ?? inferAudienceModeFromGrade(currentStudent?.grade);
   const interviewIdentityRef = useRef<{ userId: number; jobId: number } | null>(null);
   const counselDeepLinkHandledRef = useRef(false);
 
@@ -163,13 +163,12 @@ export default function HomePage() {
         setView({ phase: "empty" });
         return;
       }
-      setStudents(studentsResult.value);
-      const stored = loadInterviewIdentity();
-      const initialUser =
-        stored && studentsResult.value.some((s) => s.id === stored.userId)
-          ? stored.userId
-          : (studentsResult.value[0]?.id ?? null);
-      setSelectedUserId(initialUser);
+      const account = studentsResult.value[0] ?? null;
+      if (!account) {
+        setView({ phase: "error", message: "无法读取当前登录学生信息，请重新登录后再试。" });
+        return;
+      }
+      setCurrentStudent(account);
       setView({ phase: "jobs", mode: "real", jobs: jobsResult.value });
     })();
     return () => {
@@ -180,18 +179,16 @@ export default function HomePage() {
   useEffect(() => {
     if (view.phase !== "jobs" || view.mode !== "real" || counselDeepLinkHandledRef.current) return;
     const params = new URLSearchParams(window.location.search);
-    const userId = Number(params.get("user_id"));
     const jobId = Number(params.get("job_id"));
-    if (params.get("mode") !== "新生" || !Number.isInteger(userId) || !Number.isInteger(jobId)) return;
-    const studentExists = students.some((student) => student.id === userId);
+    const userId = currentStudent?.id;
+    if (params.get("mode") !== "新生" || !userId || !Number.isInteger(jobId)) return;
     const job = view.jobs.find((item) => item.id === jobId);
-    if (!studentExists || !job) return;
+    if (!job) return;
     counselDeepLinkHandledRef.current = true;
-    setSelectedUserId(userId);
-    setAudienceMode("新生");
+    setAudienceModeOverride("新生");
     createLock.current = true;
     setView({ phase: "device_check", job, userId, audienceMode: "新生" });
-  }, [students, view]);
+  }, [currentStudent, view]);
 
   // 组件卸载时释放录音、计时与报告恢复轮询
   useEffect(() => {
@@ -458,10 +455,10 @@ export default function HomePage() {
       return;
     }
 
-    if (!canCreateSession(selectedUserId, job.id, audienceMode)) {
+    if (currentStudentId === null || !canCreateSession(currentStudentId, job.id, audienceMode)) {
       createLock.current = false;
       setBusy(false);
-      setNotice("请先选择学生档案与受众模式（毕业生/新生），再选择岗位创建会话。");
+      setNotice("无法识别当前登录学生信息，暂时不能创建会话。请重新登录后再试。");
       return;
     }
 
@@ -469,8 +466,8 @@ export default function HomePage() {
     setView({
       phase: "device_check",
       job,
-      userId: selectedUserId as number,
-      audienceMode: audienceMode as AudienceMode,
+      userId: currentStudentId,
+      audienceMode,
     });
     setBusy(false);
   }
@@ -478,7 +475,7 @@ export default function HomePage() {
   async function enterInterview(mode: ApiMode, job: Job) {
     // 1.5s 座舱过场（AGENTS §9）；real 模式同时并行创建会话
     const realUserId =
-      view.phase === "device_check" ? view.userId : selectedUserId;
+      view.phase === "device_check" ? view.userId : currentStudentId;
     const realAudienceMode =
       view.phase === "device_check" ? view.audienceMode : audienceMode;
 
@@ -510,7 +507,7 @@ export default function HomePage() {
       setBusy(false);
       setView({
         phase: "error",
-        message: "缺少学生档案或受众模式，无法创建会话。请返回岗位页重新选择。",
+        message: "无法识别当前登录学生信息或训练模式，无法创建会话。请重新登录后再试。",
       });
       return;
     }
@@ -830,49 +827,9 @@ export default function HomePage() {
           </div>
           {view.mode === "mock" ? (
             <p className="mb-4 rounded-xl border border-[#2f6fed]/50 bg-[#0c1730] px-4 py-3 text-sm text-[#9fb4d4]">
-              演示模式 · 非正式数据：不加载真实学生档案，不伪装真实学生身份。
+              演示模式 · 前端模拟流程，不创建或保存真实面试记录。
             </p>
-          ) : (
-            <div className="mb-4 grid min-w-0 gap-3 md:grid-cols-2">
-              <label className="flex min-w-0 flex-col gap-2 text-sm text-[#9fb4d4]">
-                学生档案
-                <select
-                  className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
-                  value={selectedUserId ?? ""}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setSelectedUserId(raw === "" ? null : Number(raw));
-                  }}
-                >
-                  {students.length === 0 ? <option value="">暂无学生档案</option> : null}
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.nameMasked} · {s.major ?? "专业未填"} · {s.grade ?? "年级未填"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex min-w-0 flex-col gap-2 text-sm text-[#9fb4d4]">
-                受众模式
-                <select
-                  className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
-                  value={audienceMode ?? ""}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    setAudienceMode(
-                      raw === "毕业生" || raw === "新生" ? raw : null,
-                    );
-                  }}
-                >
-                  {AUDIENCE_MODES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          )}
+          ) : null}
           {notice ? (
             <p
               className="mb-4 max-w-full break-anywhere rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-4 py-3 text-sm text-[#ffd0a8]"
@@ -885,7 +842,7 @@ export default function HomePage() {
             {view.jobs.map((job) => {
               const ready =
                 view.mode === "mock" ||
-                canCreateSession(selectedUserId, job.id, audienceMode);
+                canCreateSession(currentStudentId, job.id, audienceMode);
               return (
                 <article
                   key={job.id}
@@ -905,7 +862,7 @@ export default function HomePage() {
                     {view.mode === "real"
                       ? ready
                         ? "选择并自检设备"
-                        : "请先选择学生与模式"
+                        : "当前账号信息缺失"
                       : "选择此岗位"}
                   </button>
                 </article>
@@ -1733,27 +1690,27 @@ async function loadRealStudentList(): Promise<ParseOk<StudentProfile[]> | ParseE
       cache: "no-store",
     });
   } catch {
-    return { ok: false, message: "网络失败，无法加载学生档案。未进入面试。" };
+    return { ok: false, message: "网络失败，无法读取当前登录账号信息。未进入面试。" };
   }
   if (!response.ok) {
     const info = await readApiError(response);
     return {
       ok: false,
-      message: formatApiError(info, "加载学生档案失败", "未进入面试。"),
+      message: formatApiError(info, "读取当前账号信息失败", "未进入面试。"),
     };
   }
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    return { ok: false, message: "学生档案响应不是合法 JSON。未进入面试。" };
+    return { ok: false, message: "当前账号信息响应不是合法 JSON。未进入面试。" };
   }
   try {
     return { ok: true, value: parseStudentsResponse(payload) };
   } catch (err) {
     return {
       ok: false,
-      message: err instanceof Error ? err.message : "学生档案响应非法。未进入面试。",
+      message: err instanceof Error ? err.message : "当前账号信息响应非法。未进入面试。",
     };
   }
 }
