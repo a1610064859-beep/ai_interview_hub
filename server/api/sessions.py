@@ -11,7 +11,7 @@ from sqlalchemy import and_, func, or_, select, update
 
 from server.config import settings
 from server.db import SessionLocal
-from server.models import Answer, Job, Question, Report, Session, User
+from server.models import Answer, Job, Report, Session, User
 from server.schemas import (
     AnswerResponse,
     DoneAnswerResponse,
@@ -27,6 +27,10 @@ from server.services import asr as asr_service
 from server.services import audio as audio_service
 from server.services import orchestrator, scoring, tts
 from server.services.asr import ASRUnavailableError, count_filler_words
+from server.services.question_bank import (
+    QuestionBankIncompleteError,
+    get_interview_questions,
+)
 from server.services.audio import AudioInvalidError, AudioProcessError
 from server.services.scoring import ScoringUnavailableError
 
@@ -105,18 +109,13 @@ async def create_session(req: SessionCreateRequest):
                 detail={"code": "USER_NOT_FOUND", "message": "学生档案不存在"},
             )
 
-        # 读取岗位第一题
-        questions = (
-            db.query(Question)
-            .filter(Question.job_id == req.job_id)
-            .order_by(Question.id.asc())
-            .all()
-        )
-        if not questions:
+        try:
+            questions = get_interview_questions(db, req.job_id)
+        except QuestionBankIncompleteError as exc:
             raise HTTPException(
-                status_code=404,
-                detail={"code": "JOB_NOT_FOUND", "message": "岗位题库未初始化"},
-            )
+                status_code=409,
+                detail={"code": "QUESTION_BANK_INCOMPLETE", "message": str(exc)},
+            ) from exc
 
         q1_text = questions[0].text
         question_texts = [q.text for q in questions[:6]]
@@ -241,12 +240,7 @@ async def submit_text_answer(
         _enforce_input_mode(db, sess, sid, my_token, "text")
 
         job = db.query(Job).filter(Job.id == sess.job_id).first()
-        questions = (
-            db.query(Question)
-            .filter(Question.job_id == sess.job_id)
-            .order_by(Question.id.asc())
-            .all()
-        )
+        questions = get_interview_questions(db, sess.job_id)
         current_answers = (
             db.query(Answer)
             .filter(Answer.session_id == sid)
@@ -629,12 +623,7 @@ async def submit_audio_answer(
             _enforce_input_mode(db, sess, sid, my_token, "voice")
 
             job = db.query(Job).filter(Job.id == sess.job_id).first()
-            questions = (
-                db.query(Question)
-                .filter(Question.job_id == sess.job_id)
-                .order_by(Question.id.asc())
-                .all()
-            )
+            questions = get_interview_questions(db, sess.job_id)
             current_answers = (
                 db.query(Answer)
                 .filter(Answer.session_id == sid)

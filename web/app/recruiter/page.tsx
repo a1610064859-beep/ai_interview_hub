@@ -14,6 +14,14 @@ import {
 } from "../../lib/report-data";
 
 type JobOption = { id: number; family: string; title: string; jdDigest: string };
+type QuestionKind = "通用" | "专业" | "情景";
+type BankQuestion = {
+  id: number;
+  type: QuestionKind;
+  text: string;
+  followup_hint: string | null;
+  active_for_interview: boolean;
+};
 
 type Cohort = { input_mode: "text" | "voice"; scoring_version: string };
 
@@ -223,6 +231,14 @@ export default function RecruiterPage() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [jdText, setJdText] = useState("");
   const [parseDraft, setParseDraft] = useState<ParseDraft | null>(null);
+  const [bankQuestions, setBankQuestions] = useState<BankQuestion[]>([]);
+  const [bankLoading, setBankLoading] = useState(false);
+  const [bankBusy, setBankBusy] = useState(false);
+  const [bankError, setBankError] = useState<string | null>(null);
+  const [bankMessage, setBankMessage] = useState<string | null>(null);
+  const [newQuestionType, setNewQuestionType] = useState<QuestionKind>("专业");
+  const [newQuestionText, setNewQuestionText] = useState("");
+  const [newFollowupHint, setNewFollowupHint] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [students, setStudents] = useState<StudentOption[]>([]);
@@ -278,6 +294,106 @@ export default function RecruiterPage() {
       };
     }));
   }, []);
+
+  const loadQuestionBank = useCallback(async (jid: number) => {
+    setBankLoading(true);
+    setBankError(null);
+    try {
+      const resp = await fetch(`/api/jobs/${jid}/questions`);
+      if (!resp.ok) throw new Error(await readApiError(resp));
+      const payload: unknown = await resp.json();
+      if (!isRecord(payload) || !Array.isArray(payload.questions)) throw new Error("题库响应非法");
+      const parsed = payload.questions.map((raw: unknown): BankQuestion => {
+        if (!isRecord(raw) || !Number.isInteger(raw.id)) throw new Error("题库题目响应非法");
+        const type = String(raw.type);
+        if (type !== "通用" && type !== "专业" && type !== "情景") throw new Error("题库题型非法");
+        return {
+          id: Number(raw.id),
+          type,
+          text: typeof raw.text === "string" ? raw.text : "",
+          followup_hint: typeof raw.followup_hint === "string" ? raw.followup_hint : null,
+          active_for_interview: raw.active_for_interview === true,
+        };
+      });
+      setBankQuestions(parsed);
+    } catch (e) {
+      setBankError(e instanceof Error ? e.message : "加载题库失败");
+      setBankQuestions([]);
+    } finally {
+      setBankLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (jobId !== null) void loadQuestionBank(jobId);
+    else setBankQuestions([]);
+  }, [jobId, loadQuestionBank]);
+
+  async function createBankQuestion() {
+    if (jobId === null || newQuestionText.trim().length < 5 || bankBusy) return;
+    setBankBusy(true);
+    setBankError(null);
+    setBankMessage(null);
+    try {
+      const resp = await fetch(`/api/jobs/${jobId}/questions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: newQuestionType,
+          text: newQuestionText,
+          followup_hint: newFollowupHint,
+        }),
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp));
+      setNewQuestionText("");
+      setNewFollowupHint("");
+      await loadQuestionBank(jobId);
+      setBankMessage("题目已加入题库，并按题型配额参与后续面试。");
+    } catch (e) {
+      setBankError(e instanceof Error ? e.message : "新增题目失败");
+    } finally {
+      setBankBusy(false);
+    }
+  }
+
+  async function saveBankQuestion(question: BankQuestion) {
+    if (jobId === null || bankBusy) return;
+    setBankBusy(true);
+    setBankError(null);
+    setBankMessage(null);
+    try {
+      const resp = await fetch(`/api/jobs/${jobId}/questions/${question.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: question.text, followup_hint: question.followup_hint ?? "" }),
+      });
+      if (!resp.ok) throw new Error(await readApiError(resp));
+      await loadQuestionBank(jobId);
+      setBankMessage("题目已保存。");
+    } catch (e) {
+      setBankError(e instanceof Error ? e.message : "保存题目失败");
+    } finally {
+      setBankBusy(false);
+    }
+  }
+
+  async function deleteBankQuestion(question: BankQuestion) {
+    if (jobId === null || bankBusy) return;
+    if (!window.confirm(`确定删除这道${question.type}题吗？每种题型会保留面试所需的最低数量。`)) return;
+    setBankBusy(true);
+    setBankError(null);
+    setBankMessage(null);
+    try {
+      const resp = await fetch(`/api/jobs/${jobId}/questions/${question.id}`, { method: "DELETE" });
+      if (!resp.ok) throw new Error(await readApiError(resp));
+      await loadQuestionBank(jobId);
+      setBankMessage("题目已删除。");
+    } catch (e) {
+      setBankError(e instanceof Error ? e.message : "删除题目失败");
+    } finally {
+      setBankBusy(false);
+    }
+  }
 
   useEffect(() => {
     void loadStudents().catch((e) => setError(e instanceof Error ? e.message : "加载学生名单失败"));
@@ -777,6 +893,73 @@ export default function RecruiterPage() {
           </div>
         </section>
       </div>
+
+      <section className="mt-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg text-white">自定义题库</h2>
+            <p className="mt-1 max-w-3xl text-sm text-[#9fb4d4]">
+              可按岗位新增、修改和删除题目。每场面试仍使用 2 道通用、3 道专业、1 道情景题；同类题目按最近加入顺序优先使用，正在进行面试时题库会锁定。
+            </p>
+          </div>
+          <button type="button" onClick={() => jobId !== null && void loadQuestionBank(jobId)} disabled={jobId === null || bankLoading || bankBusy} className="rounded-full border border-[#2f6fed] px-3 py-2 text-sm text-[#7eb6ff] disabled:opacity-50">
+            {bankLoading ? "加载中…" : "刷新题库"}
+          </button>
+        </div>
+
+        <form className="mt-4 grid gap-3 rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-4 lg:grid-cols-[150px_minmax(0,1fr)_minmax(0,1fr)_auto]" onSubmit={(event) => { event.preventDefault(); void createBankQuestion(); }}>
+          <label className="flex flex-col gap-2 text-sm text-[#9fb4d4]">
+            题型
+            <select value={newQuestionType} onChange={(event) => setNewQuestionType(event.target.value as QuestionKind)} className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white">
+              <option value="通用">通用</option>
+              <option value="专业">专业</option>
+              <option value="情景">情景</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-2 text-sm text-[#9fb4d4]">
+            自定义题目
+            <textarea value={newQuestionText} onChange={(event) => setNewQuestionText(event.target.value)} maxLength={500} minLength={5} required placeholder="输入 5–500 字的题目" className="min-h-20 rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" />
+          </label>
+          <label className="flex flex-col gap-2 text-sm text-[#9fb4d4]">
+            追问提示（可选）
+            <textarea value={newFollowupHint} onChange={(event) => setNewFollowupHint(event.target.value)} maxLength={1000} placeholder="帮助面试官围绕回答追问" className="min-h-20 rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" />
+          </label>
+          <button type="submit" disabled={jobId === null || bankBusy || newQuestionText.trim().length < 5} className="self-end rounded-full bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:opacity-50">
+            {bankBusy ? "处理中…" : "加入题库"}
+          </button>
+        </form>
+
+        {bankError ? <p className="mt-3 rounded-xl border border-[#ff8a2a] bg-[#2a1608] px-3 py-2 text-sm text-[#ffd0a8]" role="alert">{bankError}</p> : null}
+        {bankMessage ? <p className="mt-3 text-sm text-emerald-300" role="status">{bankMessage}</p> : null}
+
+        <div className="mt-4 max-h-[680px] space-y-3 overflow-y-auto pr-1">
+          {bankQuestions.map((question) => (
+            <article key={question.id} className="rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-3 sm:p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm text-white">
+                  <span className="rounded-full border border-[#2f6fed]/60 px-2 py-1 text-[#9fb4d4]">{question.type}</span>
+                  <span className={question.active_for_interview ? "text-emerald-300" : "text-[#8292aa]"}>
+                    {question.active_for_interview ? "当前面试使用" : "备用题"}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" disabled={bankBusy || question.text.trim().length < 5} onClick={() => void saveBankQuestion(question)} className="rounded-full border border-[#2f6fed] px-3 py-1.5 text-xs text-[#7eb6ff] disabled:opacity-50">保存</button>
+                  <button type="button" disabled={bankBusy} onClick={() => void deleteBankQuestion(question)} className="rounded-full border border-[#ff8a2a]/60 px-3 py-1.5 text-xs text-[#ffb36b] disabled:opacity-50">删除</button>
+                </div>
+              </div>
+              <label className="block text-xs text-[#9fb4d4]">
+                题目
+                <textarea value={question.text} maxLength={500} onChange={(event) => setBankQuestions((current) => current.map((item) => item.id === question.id ? { ...item, text: event.target.value } : item))} className="mt-1 min-h-16 w-full rounded-xl border border-[#2f6fed]/50 bg-[#0c1730] px-3 py-2 text-sm text-white" />
+              </label>
+              <label className="mt-2 block text-xs text-[#9fb4d4]">
+                追问提示
+                <input value={question.followup_hint ?? ""} maxLength={1000} onChange={(event) => setBankQuestions((current) => current.map((item) => item.id === question.id ? { ...item, followup_hint: event.target.value } : item))} placeholder="可选" className="mt-1 w-full rounded-xl border border-[#2f6fed]/50 bg-[#0c1730] px-3 py-2 text-sm text-white" />
+              </label>
+            </article>
+          ))}
+          {!bankLoading && bankQuestions.length === 0 ? <p className="py-6 text-center text-sm text-[#9fb4d4]">暂无题目，请先检查岗位题库是否已初始化。</p> : null}
+        </div>
+      </section>
     </main>
   );
 }
