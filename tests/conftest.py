@@ -14,6 +14,7 @@ _TMP_DIR = tempfile.mkdtemp(prefix="aihub-test-")
 # sqlite URL 统一用正斜杠，兼容 Windows 盘符路径（sqlite:///C:/...）
 _DB_PATH = os.path.join(_TMP_DIR, "test.db").replace("\\", "/")
 os.environ["DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
+os.environ["AUTH_REQUIRED"] = "false"
 
 os.environ["TTS_OUTPUT_DIR"] = os.path.join(_TMP_DIR, "audio")
 os.environ["LLM_USAGE_LOG_PATH"] = os.path.join(_TMP_DIR, "logs", "llm_usage.jsonl")

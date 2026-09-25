@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from server.db import SessionLocal
+from server.api.auth import require_recruiter
 from server.models import Job, Question, Session as InterviewSession
 from server.schemas import JobParseRequest, JobParseResponse, JdQuestionItem
 from server.services.jd_parse import JdParseUnavailableError, parse_jd_draft
@@ -75,7 +76,11 @@ def list_jobs(db: Session = Depends(get_db)):
 
 
 @router.post("/parse", response_model=JobParseResponse)
-async def parse_job_jd(req: JobParseRequest, db: Session = Depends(get_db)):
+async def parse_job_jd(
+    req: JobParseRequest,
+    db: Session = Depends(get_db),
+    _recruiter=Depends(require_recruiter),
+):
     job = db.query(Job).filter(Job.id == req.job_id).first()
     if job is None:
         raise HTTPException(
@@ -206,6 +211,7 @@ def add_job_question(
     request: QuestionCreateRequest,
     job_id: int = Path(..., ge=1),
     db: Session = Depends(get_db),
+    _recruiter=Depends(require_recruiter),
 ):
     _ensure_job_exists(db, job_id)
     _ensure_question_bank_mutable(db, job_id)
@@ -227,6 +233,7 @@ def update_job_question(
     job_id: int = Path(..., ge=1),
     question_id: int = Path(..., ge=1),
     db: Session = Depends(get_db),
+    _recruiter=Depends(require_recruiter),
 ):
     _ensure_job_exists(db, job_id)
     _ensure_question_bank_mutable(db, job_id)
@@ -252,6 +259,7 @@ def delete_job_question(
     job_id: int = Path(..., ge=1),
     question_id: int = Path(..., ge=1),
     db: Session = Depends(get_db),
+    _recruiter=Depends(require_recruiter),
 ):
     _ensure_job_exists(db, job_id)
     _ensure_question_bank_mutable(db, job_id)

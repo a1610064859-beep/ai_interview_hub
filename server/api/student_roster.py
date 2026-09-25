@@ -4,10 +4,11 @@ import csv
 import io
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Path as ApiPath, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path as ApiPath, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from server.config import settings
+from server.api.auth import require_recruiter
 from server.db import SessionLocal
 from server.models import User
 from server.schemas import StudentImportResponse, StudentProfileResponse
@@ -24,7 +25,11 @@ from server.services.student_roster import (
     student_detail,
 )
 
-router = APIRouter(prefix="/api/recruiter/students", tags=["student-roster"])
+router = APIRouter(
+    prefix="/api/recruiter/students",
+    tags=["student-roster"],
+    dependencies=[Depends(require_recruiter)],
+)
 
 
 def _error(exc: RosterImportError) -> HTTPException:

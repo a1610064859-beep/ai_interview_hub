@@ -1,12 +1,13 @@
 """企业端 API：同源候选查询。"""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from server.api.auth import require_recruiter
 from server.db import SessionLocal
 from server.schemas import CandidatesResponse
 from server.services import recruiter as recruiter_service
 from server.services.recruiter import JobWeightsInvalid
 
-router = APIRouter(prefix="/api/recruiter", tags=["recruiter"])
+router = APIRouter(prefix="/api/recruiter", tags=["recruiter"], dependencies=[Depends(require_recruiter)])
 
 
 @router.get("/candidates", response_model=CandidatesResponse)

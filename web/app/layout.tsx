@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
+import AuthGate from "../components/auth-gate";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,7 +19,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="zh-CN">
-      <body className="min-h-dvh overflow-x-hidden antialiased">{children}</body>
+      <body className="min-h-dvh overflow-x-hidden antialiased">
+        <AuthGate>{children}</AuthGate>
+      </body>
     </html>
   );
 }

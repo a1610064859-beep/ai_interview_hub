@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from typing import Annotated
 from uuid import uuid4
-from fastapi import APIRouter, File, Form, HTTPException, Path, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Request, UploadFile
 from sqlalchemy import and_, func, or_, select, update
 
 from server.config import settings
@@ -27,6 +27,7 @@ from server.services import asr as asr_service
 from server.services import audio as audio_service
 from server.services import orchestrator, scoring, tts
 from server.services.asr import ASRUnavailableError, count_filler_words
+from server.api.auth import require_student
 from server.services.question_bank import (
     QuestionBankIncompleteError,
     get_interview_questions,
@@ -36,11 +37,27 @@ from server.services.scoring import ScoringUnavailableError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+router = APIRouter(prefix="/api/sessions", tags=["sessions"], dependencies=[Depends(require_student)])
+
+
+def _ensure_student_session_access(request: Request, sid: int) -> None:
+    if not settings.auth_required:
+        return
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail={"code": "AUTH_REQUIRED", "message": "请先登录"})
+    with SessionLocal() as db:
+        owned = db.query(Session.id).filter(Session.id == sid, Session.user_id == current_user.id).first()
+    if owned is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "SESSION_NOT_FOUND", "message": "面试会话不存在"},
+        )
 
 
 @router.get("/{sid}/state", response_model=SessionStateResponse)
-def get_session_state(sid: int = Path(..., ge=1)):
+def get_session_state(request: Request, sid: int = Path(..., ge=1)):
+    _ensure_student_session_access(request, sid)
     # One SQL statement gives a consistent view of the committed answer and question.
     count = select(func.count(Answer.id)).where(Answer.session_id == Session.id).correlate(Session).scalar_subquery()
     report_id = select(func.max(Report.id)).where(Report.session_id == Session.id).correlate(Session).scalar_subquery()
@@ -93,7 +110,7 @@ def _enforce_input_mode(db, sess: Session, sid: int, token: str, expected: str) 
 
 
 @router.post("", response_model=SessionCreateResponse)
-async def create_session(req: SessionCreateRequest):
+async def create_session(req: SessionCreateRequest, request: Request):
     with SessionLocal() as db:
         job = db.query(Job).filter(Job.id == req.job_id).first()
         if not job:
@@ -104,6 +121,12 @@ async def create_session(req: SessionCreateRequest):
 
         user = db.query(User).filter(User.id == req.user_id).first()
         if not user or user.role != "student":
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "USER_NOT_FOUND", "message": "学生档案不存在"},
+            )
+        current_user = getattr(request.state, "current_user", None)
+        if current_user is not None and current_user.id != user.id:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "USER_NOT_FOUND", "message": "学生档案不存在"},
@@ -171,8 +194,10 @@ async def create_session(req: SessionCreateRequest):
 @router.post("/{sid}/answers/text", response_model=AnswerResponse)
 async def submit_text_answer(
     req: TextAnswerRequest,
+    request: Request,
     sid: int = Path(..., ge=1),
 ):
+    _ensure_student_session_access(request, sid)
     my_token = uuid4().hex
     now = datetime.utcnow()
     expires_at = now + timedelta(seconds=settings.lease_duration_seconds)
@@ -523,11 +548,13 @@ def _compute_wpm(answer_text: str, duration_s: float) -> float | None:
 
 @router.post("/{sid}/answers", response_model=AnswerResponse)
 async def submit_audio_answer(
+    request: Request,
     sid: Annotated[int, Path(ge=1)],
     audio: Annotated[UploadFile, File()],
     duration_s: Annotated[float, Form(ge=0.1, le=600.0)],
     pause_cnt: Annotated[int, Form(ge=0, le=10000)],
 ):
+    _ensure_student_session_access(request, sid)
     """语音答题（T5）：multipart 提交 webm/opus，服务端转码+ASR 后按文本链路推进。
 
     错误契约见 docs/asr-implementation-spec.md §5.4（阶段判定）。

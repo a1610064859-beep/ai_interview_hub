@@ -38,11 +38,16 @@ def ensure_schema_upgrades(target_engine=None):
                 ("awards", "TEXT"),
                 ("resume_storage_key", "VARCHAR(80)"),
                 ("resume_original_name", "VARCHAR(255)"),
+                ("login_email", "VARCHAR(254)"),
+                ("password_hash", "VARCHAR(255)"),
+                ("organization_name", "VARCHAR(128)"),
+                ("contact_name", "VARCHAR(128)"),
             ):
                 if name not in user_cols:
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {column_type}"))
             if add_student_no:
                 conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_student_no ON users(student_no)"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_login_email ON users(login_email)"))
 
         result = conn.execute(text("PRAGMA table_info(sessions)"))
         cols = {row[1] for row in result.fetchall()}

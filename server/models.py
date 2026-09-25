@@ -1,10 +1,11 @@
 from datetime import datetime
-from sqlalchemy import Integer, String, Text, JSON, Boolean, Float, DateTime
+from sqlalchemy import Integer, String, Text, JSON, Boolean, Float, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from .db import Base
 
 class User(Base):
     __tablename__="users"
+    __table_args__=(Index("ux_users_login_email", "login_email", unique=True),)
     id: Mapped[int]=mapped_column(Integer, primary_key=True)
     role: Mapped[str]=mapped_column(String(32))
     name_masked: Mapped[str|None]=mapped_column(String(128), nullable=True)
@@ -16,6 +17,19 @@ class User(Base):
     awards: Mapped[str|None]=mapped_column(Text, nullable=True)
     resume_storage_key: Mapped[str|None]=mapped_column(String(80), nullable=True)
     resume_original_name: Mapped[str|None]=mapped_column(String(255), nullable=True)
+    login_email: Mapped[str|None]=mapped_column(String(254), nullable=True)
+    password_hash: Mapped[str|None]=mapped_column(String(255), nullable=True)
+    organization_name: Mapped[str|None]=mapped_column(String(128), nullable=True)
+    contact_name: Mapped[str|None]=mapped_column(String(128), nullable=True)
+
+class AuthSession(Base):
+    __tablename__="auth_sessions"
+    id: Mapped[int]=mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int]=mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str]=mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime]=mapped_column(DateTime, index=True)
+
 class Job(Base):
     __tablename__="jobs"
     id: Mapped[int]=mapped_column(Integer, primary_key=True)

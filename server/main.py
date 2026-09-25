@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from server.api.auth import router as auth_router
 from server.api.jobs import router as jobs_router
 from server.api.sessions import router as sessions_router
 from server.api.reports import router as reports_router
@@ -32,6 +33,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router)
 app.include_router(jobs_router)
 app.include_router(sessions_router)
 app.include_router(reports_router)

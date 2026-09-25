@@ -633,12 +633,6 @@ export default function RecruiterPage() {
             候选仅来自学生端真实 sessions/reports；排序键为岗位 dims_json 企业加权，不等于报告等权 overall。
           </p>
         </div>
-        <Link
-          href="/"
-          className="rounded-full border border-[#2f6fed] px-4 py-2 text-sm text-[#7eb6ff]"
-        >
-          返回学生端
-        </Link>
       </header>
 
       {error ? (

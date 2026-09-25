@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from server.api.auth import require_student
 from server.db import SessionLocal
 from server.schemas import CounselRequest, CounselResponse
 from server.services.counsel import build_counsel_response
 
 
-router = APIRouter(prefix="/api", tags=["counsel"])
+router = APIRouter(prefix="/api", tags=["counsel"], dependencies=[Depends(require_student)])
 
 
 def get_db():
