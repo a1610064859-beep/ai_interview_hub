@@ -20,6 +20,37 @@ async function errorMessage(response: Response): Promise<string> {
   return "请求失败，请检查输入后重试。";
 }
 
+function assessPasswordStrength(password: string) {
+  const hasLetter = /[A-Za-z]/.test(password);
+  const hasDigit = /[0-9]/.test(password);
+  const meetsMinimum = password.length >= 9 && hasLetter && hasDigit;
+  if (!meetsMinimum) {
+    const hint = password.length < 9
+      ? "至少 9 位"
+      : !hasLetter && !hasDigit
+        ? "还需英文字母和数字"
+        : !hasLetter
+          ? "还需英文字母"
+          : "还需数字";
+    return { level: 1, label: "未达要求", hint, meetsMinimum };
+  }
+
+  const extraChecks = [
+    password.length >= 12,
+    /[a-z]/.test(password) && /[A-Z]/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+    password.length >= 16,
+  ].filter(Boolean).length;
+  const level = extraChecks >= 3 ? 3 : extraChecks >= 1 ? 2 : 1;
+  const label = level === 3 ? "强" : level === 2 ? "中" : "弱";
+  const hint = level === 1
+    ? "弱密码仍可注册；可增加长度或组合大小写、符号提升强度。"
+    : level === 2
+      ? "可以注册；增加长度或字符组合可进一步提升强度。"
+      : "强度较好。";
+  return { level, label, hint, meetsMinimum };
+}
+
 export default function AuthScreen({ initialRegister = false }: { initialRegister?: boolean }) {
   const router = useRouter();
   const [role, setRole] = useState<AccountRole>("student");
@@ -33,6 +64,7 @@ export default function AuthScreen({ initialRegister = false }: { initialRegiste
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const passwordStrength = assessPasswordStrength(password);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -133,13 +165,43 @@ export default function AuthScreen({ initialRegister = false }: { initialRegiste
 
           <label className="block text-sm text-[#9fb4d4]">
             密码
-            <input required type="password" autoComplete={initialRegister ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={initialRegister ? 12 : 1} maxLength={128} className="mt-2 w-full rounded-xl border border-[#2f6fed]/60 bg-[#050912] px-3 py-3 text-white outline-none focus:border-[#7eb6ff]" placeholder={initialRegister ? "至少 12 位" : "请输入密码"} />
+            <input required type="password" autoComplete={initialRegister ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={initialRegister ? 9 : 1} pattern={initialRegister ? "(?=.*[A-Za-z])(?=.*[0-9]).*" : undefined} title={initialRegister ? "密码至少9位，且必须包含英文字母和数字" : undefined} maxLength={128} className="mt-2 w-full rounded-xl border border-[#2f6fed]/60 bg-[#050912] px-3 py-3 text-white outline-none focus:border-[#7eb6ff]" placeholder={initialRegister ? "至少9位，包含字母和数字" : "请输入密码"} />
+            {initialRegister ? (
+              <span className="mt-1 block text-xs text-[#9fb4d4]">至少 9 位，且含英文字母和数字；强度仅作提示，弱密码也能注册。</span>
+            ) : null}
           </label>
+
+          {initialRegister && password ? (
+            <div className="-mt-2 rounded-lg bg-[#071225] px-3 py-2 text-xs text-[#9fb4d4]" aria-live="polite">
+              <div className="flex items-center gap-2">
+                <div className="flex flex-1 gap-1" role="img" aria-label={`密码强度：${passwordStrength.label}`}>
+                  {[1, 2, 3].map((segment) => (
+                    <span
+                      key={segment}
+                      className={`h-1.5 flex-1 rounded-full ${
+                        segment > passwordStrength.level
+                          ? "bg-slate-700"
+                          : !passwordStrength.meetsMinimum
+                            ? "bg-rose-500"
+                            : passwordStrength.level === 1
+                              ? "bg-rose-400"
+                              : passwordStrength.level === 2
+                                ? "bg-amber-400"
+                                : "bg-emerald-400"
+                      }`}
+                    />
+                  ))}
+                </div>
+                <strong className={passwordStrength.meetsMinimum ? "text-white" : "text-rose-300"}>{passwordStrength.label}</strong>
+              </div>
+              <p className="mt-1">{passwordStrength.hint}</p>
+            </div>
+          ) : null}
 
           {initialRegister ? (
             <label className="block text-sm text-[#9fb4d4]">
               确认密码
-              <input required type="password" autoComplete="new-password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} minLength={12} maxLength={128} className="mt-2 w-full rounded-xl border border-[#2f6fed]/60 bg-[#050912] px-3 py-3 text-white outline-none focus:border-[#7eb6ff]" />
+              <input required type="password" autoComplete="new-password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} minLength={9} maxLength={128} className="mt-2 w-full rounded-xl border border-[#2f6fed]/60 bg-[#050912] px-3 py-3 text-white outline-none focus:border-[#7eb6ff]" />
             </label>
           ) : null}
 

@@ -21,13 +21,21 @@ _login_failures: dict[str, deque[float]] = defaultdict(deque)
 _login_failures_lock = Lock()
 
 
+def _validate_registration_password(value: str) -> str:
+    has_letter = any(char.isascii() and char.isalpha() for char in value)
+    has_digit = any(char.isascii() and char.isdigit() for char in value)
+    if len(value) < 9 or not has_letter or not has_digit:
+        raise ValueError("密码至少9位，且必须包含英文字母和数字")
+    return value
+
+
 class StudentRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(..., min_length=3, max_length=254)
     name: str = Field(..., min_length=1, max_length=128)
     major: str = Field(..., min_length=1, max_length=128)
     grade: str = Field(..., min_length=1, max_length=64)
-    password: str = Field(..., min_length=12, max_length=128)
+    password: str = Field(..., min_length=9, max_length=128)
 
     @field_validator("email")
     @classmethod
@@ -39,13 +47,18 @@ class StudentRegisterRequest(BaseModel):
     def normalize_profile(cls, value: str, info) -> str:
         return auth_service.normalize_profile_field(value, info.field_name)
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_registration_password(value)
+
 
 class RecruiterRegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(..., min_length=3, max_length=254)
     organization_name: str = Field(..., min_length=2, max_length=128)
     contact_name: str = Field(..., min_length=2, max_length=128)
-    password: str = Field(..., min_length=12, max_length=128)
+    password: str = Field(..., min_length=9, max_length=128)
 
     @field_validator("email")
     @classmethod
@@ -59,6 +72,11 @@ class RecruiterRegisterRequest(BaseModel):
         if len(normalized) < 2 or any(ord(char) < 32 for char in normalized):
             raise ValueError("该字段格式不正确")
         return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return _validate_registration_password(value)
 
 
 class StudentLoginRequest(BaseModel):

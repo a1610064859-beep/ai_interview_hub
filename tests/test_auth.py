@@ -83,6 +83,43 @@ def test_student_registration_login_and_logout_use_hashed_credentials(auth_clien
     assert auth_client.get("/api/auth/me").json()["authenticated"] is False
 
 
+@pytest.mark.parametrize(
+    "endpoint,payload",
+    [
+        (
+            "/api/auth/register/student",
+            {"email": "password-student@example.cn", "name": "测试学生", "major": "车辆工程", "grade": "大三"},
+        ),
+        (
+            "/api/auth/register/recruiter",
+            {"email": "password-hr@example.cn", "organization_name": "示例企业", "contact_name": "招聘负责人"},
+        ),
+    ],
+)
+def test_registration_accepts_nine_character_password_with_letters_and_digits(auth_client, endpoint, payload):
+    response = auth_client.post(endpoint, json={**payload, "password": "Abc123456"})
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize(
+    "endpoint,payload",
+    [
+        (
+            "/api/auth/register/student",
+            {"email": "weak-student@example.cn", "name": "测试学生", "major": "车辆工程", "grade": "大三"},
+        ),
+        (
+            "/api/auth/register/recruiter",
+            {"email": "weak-hr@example.cn", "organization_name": "示例企业", "contact_name": "招聘负责人"},
+        ),
+    ],
+)
+@pytest.mark.parametrize("password", ["Abc12345", "abcdefghijklm", "1234567890123"])
+def test_registration_rejects_short_or_single_class_passwords(auth_client, endpoint, payload, password):
+    response = auth_client.post(endpoint, json={**payload, "password": password})
+    assert response.status_code == 422
+
+
 def test_student_registration_rejects_duplicate_email_and_injection(auth_client):
     created = auth_client.post(
         "/api/auth/register/student",
@@ -91,7 +128,7 @@ def test_student_registration_rejects_duplicate_email_and_injection(auth_client)
     assert created.status_code == 201
     duplicate = auth_client.post(
         "/api/auth/register/student",
-        json={"email": "same@example.cn", "name": "李同学", "major": "车辆工程", "grade": "大三", "password": "another-safe-passphrase"},
+        json={"email": "same@example.cn", "name": "李同学", "major": "车辆工程", "grade": "大三", "password": "another-safe-passphrase9"},
     )
     assert duplicate.status_code == 400
 
@@ -115,7 +152,7 @@ def test_recruiter_registration_and_role_protection(auth_client):
             "email": "hr@example.cn",
             "organization_name": "示例汽车科技",
             "contact_name": "招聘负责人",
-            "password": "secure-company-passphrase",
+            "password": "secure-company-passphrase9",
         },
     )
     assert register.status_code == 201
