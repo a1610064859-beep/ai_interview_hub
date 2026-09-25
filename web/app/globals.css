@@ -97,6 +97,10 @@ body::after {
 .hero-title { letter-spacing: -0.045em; text-shadow: 0 0 28px rgba(47,111,237,.45); }
 .hero-title span { color: #ff9d52; }
 
+@media (max-width: 1360px) {
+  .site-header { padding-top: 3.5rem; }
+}
+
 .site-shell section { animation: panel-rise .55s ease both; }
 .site-shell section.rounded-2xl, .site-shell section.rounded-3xl { border: 1px solid rgba(255,255,255,.2); border-color: rgba(255,255,255,.2); background: linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.04)); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(124,58,237,.16), inset 0 1px rgba(255,255,255,.08); }
 .site-shell button { background-image: linear-gradient(90deg, #7c3aed, #d946ef, #06b6d4); background-size: 200% auto; border-color: rgba(255,255,255,.28); color: white; }

@@ -811,12 +811,6 @@ export default function HomePage() {
             >
               新生岗位路径
             </Link>
-            <Link
-              href="/recruiter"
-              className="rounded-full border border-[#2f6fed] px-4 py-2 text-sm text-[#7eb6ff]"
-            >
-              企业初筛
-            </Link>
           </div>
         </div>
       </header>
