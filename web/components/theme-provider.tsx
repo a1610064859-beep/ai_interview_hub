@@ -7,32 +7,61 @@ export type AppTheme = "day" | "night";
 const THEME_STORAGE_KEY = "ai-interview-hub-theme";
 const ThemeContext = createContext<{ theme: AppTheme; setTheme: (theme: AppTheme) => void } | null>(null);
 
+function readSavedTheme(): AppTheme {
+  try {
+    const savedCookie = document.cookie
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${THEME_STORAGE_KEY}=`));
+    if (savedCookie) return savedCookie.slice(THEME_STORAGE_KEY.length + 1) === "night" ? "night" : "day";
+  } catch {
+    // Continue to localStorage when cookies are unavailable.
+  }
+
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "night" ? "night" : "day";
+  } catch {
+    return "day";
+  }
+}
+
+function saveTheme(next: AppTheme) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, next);
+  } catch {
+    // Keep the current page usable when browser storage is unavailable.
+  }
+
+  try {
+    document.cookie = `${THEME_STORAGE_KEY}=${next}; Max-Age=31536000; Path=/; SameSite=Lax`;
+  } catch {
+    // The preference still applies for this page even when persistent storage is blocked.
+  }
+}
+
 export function useAppTheme() {
   const context = useContext(ThemeContext);
   if (!context) throw new Error("useAppTheme must be used inside ThemeProvider");
   return context;
 }
 
-export default function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<AppTheme>("day");
+export default function ThemeProvider({
+  children,
+  initialTheme,
+}: {
+  children: ReactNode;
+  initialTheme: AppTheme;
+}) {
+  const [theme, setThemeState] = useState<AppTheme>(initialTheme);
 
   const setTheme = useCallback((next: AppTheme) => {
     setThemeState(next);
     document.documentElement.dataset.theme = next;
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, next);
-    } catch {
-      // Keep the current page usable when browser storage is unavailable.
-    }
+    saveTheme(next);
   }, []);
 
   useEffect(() => {
-    let initial: AppTheme = "day";
-    try {
-      initial = window.localStorage.getItem(THEME_STORAGE_KEY) === "night" ? "night" : "day";
-    } catch {
-      // The default theme is day mode.
-    }
+    const initial = readSavedTheme();
     setThemeState(initial);
     document.documentElement.dataset.theme = initial;
 

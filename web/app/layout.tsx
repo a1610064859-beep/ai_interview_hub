@@ -1,8 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 
 import AuthGate from "../components/auth-gate";
-import ThemeProvider from "../components/theme-provider";
+import ThemeProvider, { type AppTheme } from "../components/theme-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -17,11 +18,14 @@ export const viewport: Viewport = {
   themeColor: "#050912",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const savedTheme = (await cookies()).get("ai-interview-hub-theme")?.value;
+  const initialTheme: AppTheme = savedTheme === "night" ? "night" : "day";
+
   return (
-    <html lang="zh-CN" data-theme="day" suppressHydrationWarning>
+    <html lang="zh-CN" data-theme={initialTheme} suppressHydrationWarning>
       <body className="min-h-dvh overflow-x-hidden antialiased">
-        <ThemeProvider>
+        <ThemeProvider initialTheme={initialTheme}>
           <AuthGate>{children}</AuthGate>
         </ThemeProvider>
       </body>
