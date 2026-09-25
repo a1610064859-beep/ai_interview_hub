@@ -5,9 +5,11 @@ from __future__ import annotations
 import csv
 import io
 import re
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+from xml.etree import ElementTree
 
 from sqlalchemy.orm import Session as DbSession
 
@@ -18,7 +20,46 @@ EDUCATION_LEVELS = ("中职", "高职/大专", "本科", "硕士", "博士")
 ALLOWED_RESUME_EXTENSIONS = {".docx", ".pdf"}
 MAX_CSV_BYTES = 2 * 1024 * 1024
 MAX_RESUME_BYTES = 10 * 1024 * 1024
+MAX_DOCX_XML_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 500
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+class ResumeReadError(ValueError):
+    pass
+
+
+def extract_docx_paragraphs(data: bytes) -> list[str]:
+    """Extract readable paragraph text from a DOCX body without external libraries."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            document_info = archive.getinfo("word/document.xml")
+            if document_info.file_size > MAX_DOCX_XML_BYTES:
+                raise ResumeReadError("简历正文超出可读取大小")
+            with archive.open(document_info) as document_file:
+                document_xml = document_file.read(MAX_DOCX_XML_BYTES + 1)
+            if len(document_xml) > MAX_DOCX_XML_BYTES:
+                raise ResumeReadError("简历正文超出可读取大小")
+        root = ElementTree.fromstring(document_xml)
+    except ResumeReadError:
+        raise
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, OSError, RuntimeError) as exc:
+        raise ResumeReadError("DOCX 文件损坏或缺少正文") from exc
+
+    paragraphs: list[str] = []
+    for paragraph in root.iter(f"{{{_W_NS}}}p"):
+        parts: list[str] = []
+        for element in paragraph.iter():
+            if element.tag == f"{{{_W_NS}}}t":
+                parts.append(element.text or "")
+            elif element.tag == f"{{{_W_NS}}}tab":
+                parts.append("\t")
+            elif element.tag in {f"{{{_W_NS}}}br", f"{{{_W_NS}}}cr"}:
+                parts.append("\n")
+        text = "".join(parts).strip()
+        if text:
+            paragraphs.append(text)
+    return paragraphs
 
 
 class RosterImportError(ValueError):

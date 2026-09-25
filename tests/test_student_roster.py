@@ -2,6 +2,8 @@
 
 import csv
 import io
+import zipfile
+from xml.sax.saxutils import escape
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,6 +34,19 @@ def csv_file(*rows):
     return stream.getvalue().encode("utf-8-sig")
 
 
+def make_docx(*paragraphs: str) -> bytes:
+    body = "".join(f"<w:p><w:r><w:t>{escape(text)}</w:t></w:r></w:p>" for text in paragraphs)
+    document = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body></w:document>"
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", document)
+    return buffer.getvalue()
+
+
 def test_import_csv_roster_and_open_student_resume():
     template = client.get("/api/recruiter/students/template.csv")
     assert template.status_code == 200
@@ -42,11 +57,12 @@ def test_import_csv_roster_and_open_student_resume():
         ["S1001", "王*明", "车辆工程", "大三", "本科", "整车测试实习三个月", "校级一等奖", "wang.docx"],
         ["S1002", "李*华", "汽车电子", "大二", "高职/大专", "", "", ""],
     )
+    docx = make_docx("实习经历：整车测试", "项目经历：读取传感器数据")
     imported = client.post(
         "/api/recruiter/students/import",
         files=[
             ("csv_file", ("students.csv", data, "text/csv")),
-            ("resumes", ("wang.docx", b"PK\x03\x04sample", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+            ("resumes", ("wang.docx", docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
         ],
     )
     assert imported.status_code == 200, imported.text
@@ -63,11 +79,46 @@ def test_import_csv_roster_and_open_student_resume():
     assert detail.json()["has_resume"] is True
     resume = client.get(f"/api/recruiter/students/{student_id}/resume")
     assert resume.status_code == 200
-    assert resume.content == b"PK\x03\x04sample"
+    assert resume.content == docx
     assert "attachment" in resume.headers["content-disposition"]
+    readable = client.get(f"/api/recruiter/students/{student_id}/resume/text")
+    assert readable.status_code == 200
+    assert readable.json() == {
+        "student_id": student_id,
+        "filename": "wang.docx",
+        "paragraphs": ["实习经历：整车测试", "项目经历：读取传感器数据"],
+        "text": "实习经历：整车测试\n项目经历：读取传感器数据",
+    }
 
     with SessionLocal() as db:
         assert db.query(User).filter(User.role == "student").count() == 2
+
+
+def test_resume_text_endpoint_handles_invalid_docx_and_pdf():
+    malformed_csv = csv_file(["S1003", "周*宁", "汽车电子", "大二", "本科", "", "", "broken.docx"])
+    malformed_import = client.post(
+        "/api/recruiter/students/import",
+        files=[
+            ("csv_file", ("students.csv", malformed_csv, "text/csv")),
+            ("resumes", ("broken.docx", b"PK\x03\x04not-a-docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+        ],
+    )
+    assert malformed_import.status_code == 200
+    malformed_id = client.get("/api/students").json()["students"][0]["id"]
+    malformed = client.get(f"/api/recruiter/students/{malformed_id}/resume/text")
+    assert malformed.status_code == 422
+    assert malformed.json()["detail"]["code"] == "INVALID_DOCX"
+
+    pdf_csv = csv_file(["S1004", "吴*杰", "汽车电子", "大二", "本科", "", "", "resume.pdf"])
+    pdf_import = client.post(
+        "/api/recruiter/students/import",
+        files=[("csv_file", ("students.csv", pdf_csv, "text/csv")), ("resumes", ("resume.pdf", b"%PDF-sample", "application/pdf"))],
+    )
+    assert pdf_import.status_code == 200
+    pdf_id = next(student["id"] for student in client.get("/api/students").json()["students"] if student["student_no"] == "S1004")
+    unsupported = client.get(f"/api/recruiter/students/{pdf_id}/resume/text")
+    assert unsupported.status_code == 415
+    assert unsupported.json()["detail"]["code"] == "RESUME_FORMAT_UNSUPPORTED"
 
 
 def test_reimport_updates_same_student_without_losing_identity():

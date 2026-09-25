@@ -229,6 +229,9 @@ export default function RecruiterPage() {
   const [profileId, setProfileId] = useState<number | null>(null);
   const [profile, setProfile] = useState<StudentProfile | null>(null);
   const [profileRevision, setProfileRevision] = useState(0);
+  const [resumeText, setResumeText] = useState<{ studentId: number; paragraphs: string[] } | null>(null);
+  const [resumeTextLoading, setResumeTextLoading] = useState(false);
+  const [resumeTextError, setResumeTextError] = useState<string | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [resumeFiles, setResumeFiles] = useState<File[]>([]);
   const [importBusy, setImportBusy] = useState(false);
@@ -374,6 +377,37 @@ export default function RecruiterPage() {
     })();
     return () => { cancelled = true; };
   }, [profileId, profileRevision]);
+
+  useEffect(() => {
+    const studentId = profile?.id;
+    const filename = profile?.resume_filename;
+    if (!profile?.has_resume || !filename?.toLowerCase().endsWith(".docx") || studentId === undefined) {
+      setResumeText(null);
+      setResumeTextError(null);
+      setResumeTextLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setResumeText(null);
+    setResumeTextError(null);
+    setResumeTextLoading(true);
+    (async () => {
+      try {
+        const response = await fetch(`/api/recruiter/students/${studentId}/resume/text`);
+        if (!response.ok) throw new Error(await readApiError(response));
+        const raw: unknown = await response.json();
+        if (!isRecord(raw) || raw.student_id !== studentId || !Array.isArray(raw.paragraphs) || raw.paragraphs.some((item) => typeof item !== "string")) {
+          throw new Error("简历内容响应非法");
+        }
+        if (!cancelled) setResumeText({ studentId, paragraphs: raw.paragraphs as string[] });
+      } catch (e) {
+        if (!cancelled) setResumeTextError(e instanceof Error ? e.message : "读取简历内容失败");
+      } finally {
+        if (!cancelled) setResumeTextLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profile?.id, profile?.has_resume, profile?.resume_filename]);
 
   useEffect(() => {
     if (!selected || !chartRef.current) {
@@ -709,9 +743,32 @@ export default function RecruiterPage() {
                   <dt className="text-[#9fb4d4]">简历</dt>
                   <dd>
                     {profile.has_resume ? (
-                      <a href={`/api/recruiter/students/${profile.id}/resume`} target="_blank" rel="noopener noreferrer" className="text-[#7eb6ff] underline">
-                        查看 / 下载 {profile.resume_filename ?? "简历"}
-                      </a>
+                      <>
+                        <a
+                          href={`/api/recruiter/students/${profile.id}/resume`}
+                          target={profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "_blank" : undefined}
+                          rel="noopener noreferrer"
+                          className="text-[#7eb6ff] underline"
+                        >
+                          {profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "浏览器预览 PDF" : "下载 Word 原件"} · {profile.resume_filename ?? "简历"}
+                        </a>
+                        {profile.resume_filename?.toLowerCase().endsWith(".docx") && (
+                          <div className="mt-3 rounded-xl border border-[#2f6fed]/40 bg-[#050912]/80 p-3" aria-live="polite">
+                            <h4 className="text-sm font-semibold text-white">简历文字内容（网页读取）</h4>
+                            {resumeTextLoading ? (
+                              <p className="mt-2 text-sm text-[#9fb4d4]">正在读取 DOCX 正文…</p>
+                            ) : resumeTextError ? (
+                              <p className="mt-2 text-sm text-[#ffb7a8]">{resumeTextError}</p>
+                            ) : resumeText?.studentId === profile.id ? (
+                              resumeText.paragraphs.length > 0 ? (
+                                <div className="mt-2 max-h-80 space-y-2 overflow-y-auto pr-1 text-sm leading-6 text-white">
+                                  {resumeText.paragraphs.map((paragraph, index) => <p key={`${index}-${paragraph}`}>{paragraph}</p>)}
+                                </div>
+                              ) : <p className="mt-2 text-sm text-[#9fb4d4]">DOCX 中没有可读取的正文文字。</p>
+                            ) : null}
+                          </div>
+                        )}
+                      </>
                     ) : <span className="text-white">未上传</span>}
                   </dd>
                 </div>

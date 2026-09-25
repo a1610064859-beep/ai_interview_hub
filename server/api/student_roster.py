@@ -16,7 +16,9 @@ from server.services.student_roster import (
     MAX_CSV_BYTES,
     MAX_RESUME_BYTES,
     ResumeUpload,
+    ResumeReadError,
     RosterImportError,
+    extract_docx_paragraphs,
     import_roster,
     parse_roster_csv,
     student_detail,
@@ -86,3 +88,33 @@ def get_student_resume(student_id: int = ApiPath(..., ge=1)):
             filename=user.resume_original_name or file_path.name,
             content_disposition_type="inline" if is_pdf else "attachment",
         )
+
+
+@router.get("/{student_id}/resume/text")
+def get_student_resume_text(student_id: int = ApiPath(..., ge=1)):
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.id == student_id, User.role == "student").first()
+        if user is None or not user.resume_storage_key:
+            raise HTTPException(status_code=404, detail={"code": "RESUME_NOT_FOUND", "message": "简历不存在"})
+        directory = Path(settings.resume_upload_dir).resolve()
+        file_path = (directory / user.resume_storage_key).resolve()
+        if not file_path.is_relative_to(directory) or not file_path.is_file():
+            raise HTTPException(status_code=404, detail={"code": "RESUME_NOT_FOUND", "message": "简历不存在"})
+        if file_path.suffix.lower() != ".docx":
+            raise HTTPException(
+                status_code=415,
+                detail={"code": "RESUME_FORMAT_UNSUPPORTED", "message": "网页文字读取目前仅支持 DOCX 格式"},
+            )
+        try:
+            paragraphs = extract_docx_paragraphs(file_path.read_bytes())
+        except (ResumeReadError, OSError):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "INVALID_DOCX", "message": "DOCX 简历无法读取，请下载原文件检查"},
+            ) from None
+        return {
+            "student_id": user.id,
+            "filename": user.resume_original_name or file_path.name,
+            "paragraphs": paragraphs,
+            "text": "\n".join(paragraphs),
+        }
