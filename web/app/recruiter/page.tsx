@@ -96,7 +96,17 @@ const WEIGHT_LABELS: Record<WeightKey, string> = {
 
 function parseWeightPercentages(weights: Record<string, unknown> | null): WeightPercentages | null {
   if (!weights || WEIGHT_KEYS.some((key) => typeof weights[key] !== "number" || !Number.isFinite(weights[key]))) return null;
-  return Object.fromEntries(WEIGHT_KEYS.map((key) => [key, Math.round(Number(weights[key]) * 100)])) as WeightPercentages;
+  const values = Object.fromEntries(WEIGHT_KEYS.map((key) => [key, Number(weights[key])])) as WeightPercentages;
+  const total = WEIGHT_KEYS.reduce((sum, key) => sum + values[key], 0);
+  if (Math.abs(total - 1) > 0.000001) return null;
+  const exact = WEIGHT_KEYS.map((key) => values[key] * 100);
+  const rounded = exact.map(Math.floor);
+  const remainder = 100 - rounded.reduce((sum, value) => sum + value, 0);
+  const priority = exact
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+  for (let index = 0; index < remainder; index += 1) rounded[priority[index].index] += 1;
+  return Object.fromEntries(WEIGHT_KEYS.map((key, index) => [key, rounded[index]])) as WeightPercentages;
 }
 
 function rebalanceWeight(current: WeightPercentages, key: WeightKey, value: number): WeightPercentages {
@@ -303,7 +313,11 @@ export default function RecruiterPage() {
   const [resumeFiles, setResumeFiles] = useState<File[]>([]);
   const [importBusy, setImportBusy] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
-  const [sortMode, setSortMode] = useState<"score" | "education_desc" | "education_asc">("score");
+  const [sortMode, setSortMode] = useState<"score" | "education_desc" | "education_asc" | "school_desc" | "school_asc">("score");
+  const [weightDraft, setWeightDraft] = useState<WeightPercentages | null>(null);
+  const [weightSaving, setWeightSaving] = useState(false);
+  const [weightMessage, setWeightMessage] = useState<string | null>(null);
+  const [weightError, setWeightError] = useState<string | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
   const resumeInputRef = useRef<HTMLInputElement | null>(null);
   const chartRef = useRef<HTMLDivElement | null>(null);
@@ -455,6 +469,9 @@ export default function RecruiterPage() {
     setBusy(true);
     setError(null);
     setList(null);
+    setWeightDraft(null);
+    setWeightMessage(null);
+    setWeightError(null);
     setSelectedCohortKey("");
     setSelectedUserId(null);
     try {
@@ -462,6 +479,7 @@ export default function RecruiterPage() {
       if (!resp.ok) throw new Error(await readApiError(resp));
       const payload = parseCandidatesPayload(await resp.json());
       setDiscover(payload);
+      setWeightDraft(parseWeightPercentages(payload.weights));
     } catch (e) {
       setDiscover(null);
       setError(e instanceof Error ? e.message : "发现 cohort 失败");
@@ -499,6 +517,34 @@ export default function RecruiterPage() {
     }
   }, [jobId, selectedCohortKey]);
 
+  async function saveRecruiterWeights() {
+    if (jobId === null || weightDraft === null) return;
+    setWeightSaving(true);
+    setWeightError(null);
+    setWeightMessage(null);
+    try {
+      const body = Object.fromEntries(WEIGHT_KEYS.map((key) => [key, weightDraft[key] / 100]));
+      const response = await fetch(`/api/jobs/${jobId}/weights`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      const payload: unknown = await response.json();
+      if (!isRecord(payload)) throw new Error("权重保存响应非法");
+      const savedWeights = parseWeightPercentages(payload);
+      if (!savedWeights) throw new Error("权重保存响应缺少有效的六项权重");
+      setWeightDraft(savedWeights);
+      setDiscover((current) => current ? { ...current, weights: payload } : current);
+      setWeightMessage("权重已保存到当前岗位，岗位加权分已更新。");
+      if (selectedCohortKey) await loadCandidates();
+    } catch (e) {
+      setWeightError(e instanceof Error ? e.message : "保存权重失败");
+    } finally {
+      setWeightSaving(false);
+    }
+  }
+
   useEffect(() => {
     if (selectedCohortKey) void loadCandidates();
   }, [selectedCohortKey, loadCandidates]);
@@ -511,8 +557,15 @@ export default function RecruiterPage() {
   const visibleCandidates = useMemo(() => {
     const candidates = list?.candidates ?? [];
     if (sortMode === "score") return candidates;
+    if (sortMode === "school_desc" || sortMode === "school_asc") {
+      return sortCandidatesBySchoolTier(candidates, sortMode === "school_desc" ? "desc" : "asc");
+    }
     return sortCandidatesByEducation(candidates, sortMode === "education_desc" ? "desc" : "asc");
   }, [list, sortMode]);
+
+  const savedWeightPercentages = parseWeightPercentages(discover?.weights ?? null);
+  const weightDraftIsDirty = weightDraft !== null && savedWeightPercentages !== null
+    && WEIGHT_KEYS.some((key) => weightDraft[key] !== savedWeightPercentages[key]);
 
   useEffect(() => {
     if (profileId === null) {
@@ -534,6 +587,7 @@ export default function RecruiterPage() {
           major: typeof raw.major === "string" ? raw.major : null,
           grade: typeof raw.grade === "string" ? raw.grade : null,
           education_level: typeof raw.education_level === "string" ? raw.education_level : null,
+          school_tier: typeof raw.school_tier === "string" ? raw.school_tier : null,
           internship_experience: typeof raw.internship_experience === "string" ? raw.internship_experience : null,
           awards: typeof raw.awards === "string" ? raw.awards : null,
           has_resume: raw.has_resume === true,
@@ -710,7 +764,7 @@ export default function RecruiterPage() {
       <section className="mb-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
         <h2 className="text-lg text-white">学生档案与名单导入</h2>
         <p className="mt-1 text-sm text-[#9fb4d4]">
-          下载固定 CSV 模板，填写脱敏姓名及学生编号；简历文件名填写完整文件名。请将 CSV 引用的 .docx 或 .pdf 简历集中放入一个文件夹，再选择该文件夹；文件夹内只放 CSV 引用的简历，避免多传造成不匹配。重复编号更新档案，未完成训练的学生不会进入候选榜。
+          下载固定 CSV 模板，填写脱敏姓名、学生编号和学校档次（C9/985、211/双一流、普通本科、高职/大专、中职/技校或其他/未知）；学校档次请按学校实际情况填写，不会根据学历推断。简历文件名填写完整文件名。请将 CSV 引用的 .docx 或 .pdf 简历集中放入一个文件夹，再选择该文件夹；文件夹内只放 CSV 引用的简历，避免多传造成不匹配。重复编号更新档案，未完成训练的学生不会进入候选榜。
         </p>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <div className="rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-4">
@@ -843,6 +897,8 @@ export default function RecruiterPage() {
               排序
               <select className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
                 <option value="score">岗位加权分</option>
+                <option value="school_desc">学校档次：高到低</option>
+                <option value="school_asc">学校档次：低到高</option>
                 <option value="education_desc">学历：高到低</option>
                 <option value="education_asc">学历：低到高</option>
               </select>
@@ -867,6 +923,59 @@ export default function RecruiterPage() {
           <p className="mb-3 text-xs text-[#7eb6ff]">
             企业加权（岗位 dims_json）· eligibility={discover?.eligibility ?? "—"}
           </p>
+          <div className="mb-4 rounded-xl border border-[#2f6fed]/40 bg-[#050912] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white">人才需求权重</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-[#9fb4d4]">
+                  调整当前岗位的面试四维、学历和学校档次占比；拖动任一项时其余五项会按现有比例自动分配，合计保持 100%。旧版岗位默认保留原面试维度的相对比例并分配学历 20%、学校档次 20%。
+                </p>
+              </div>
+              <button type="button" disabled={!weightDraft || !weightDraftIsDirty || weightSaving} onClick={() => void saveRecruiterWeights()} className="rounded-lg bg-[#ff8a2a] px-3 py-2 text-xs font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50">
+                {weightSaving ? "保存中…" : "保存本岗位权重"}
+              </button>
+            </div>
+            {weightDraft ? (
+              <>
+                <div className="mt-3 grid gap-x-5 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {WEIGHT_KEYS.map((key) => (
+                    <label key={key} className="block text-xs text-[#d7e3f7]">
+                      <span className="mb-1 flex items-center justify-between gap-2">
+                        <span>{WEIGHT_LABELS[key]}</span>
+                        <span className="tabular-nums text-[#7eb6ff]">{weightDraft[key]}%</span>
+                      </span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={weightDraft[key]}
+                        disabled={weightSaving}
+                        aria-label={`${WEIGHT_LABELS[key]}权重`}
+                        className="w-full accent-[#ff8a2a]"
+                        onChange={(event) => {
+                          const nextValue = Number(event.target.value);
+                          setWeightDraft((current) => current ? rebalanceWeight(current, key, nextValue) : current);
+                          setWeightMessage(null);
+                          setWeightError(null);
+                        }}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-2 text-right text-xs text-[#7eb6ff]">
+                  当前合计 {WEIGHT_KEYS.reduce((total, key) => total + weightDraft[key], 0)}%
+                </p>
+              </>
+            ) : (
+              <p className="mt-3 text-xs text-[#ffd0a8]">权重配置不可用：请先修复当前岗位的权重数据。</p>
+            )}
+            <p className="mt-2 text-xs text-[#9fb4d4]" aria-live="polite">
+              缺失的面试维度、学历或学校档次不按零分处理，该项不参与该候选人的加权计算，其他已知项按比例折算。
+            </p>
+            {weightMessage ? <p className="mt-2 text-xs text-emerald-300" role="status">{weightMessage}</p> : null}
+            {weightError ? <p className="mt-2 text-xs text-[#ffd0a8]" role="alert">权重保存失败：{weightError}</p> : null}
+          </div>
           {emptyHint ? (
             <p className="rounded-xl border border-[#2f6fed]/40 bg-[#050912] px-4 py-6 text-sm text-[#9fb4d4]">
               {emptyHint}
@@ -888,7 +997,7 @@ export default function RecruiterPage() {
                       <div>
                         <p className="text-white">{c.name_masked ?? `学生#${c.user_id}`}</p>
                         <p className="text-xs text-[#9fb4d4]">
-                          {c.major ?? "专业未填"} · {c.grade ?? "年级未填"} · {c.education_level ?? "学历未填"} · sid={c.session_id}
+                          {c.major ?? "专业未填"} · {c.grade ?? "年级未填"} · {c.education_level ?? "学历未填"} · {c.school_tier ?? "学校档次未填"} · sid={c.session_id}
                         </p>
                       </div>
                       <div className="text-right text-sm">
@@ -955,6 +1064,7 @@ export default function RecruiterPage() {
               <dl className="mt-3 space-y-3 text-sm">
                 <div><dt className="text-[#9fb4d4]">姓名 / 学生编号</dt><dd className="text-white">{profile.name_masked ?? "未填写"} / {profile.student_no ?? `#${profile.id}`}</dd></div>
                 <div><dt className="text-[#9fb4d4]">专业 / 年级 / 学历</dt><dd className="text-white">{profile.major ?? "未填写"} / {profile.grade ?? "未填写"} / {profile.education_level ?? "未填写"}</dd></div>
+                <div><dt className="text-[#9fb4d4]">学校档次</dt><dd className="text-white">{profile.school_tier ?? "未填写"}</dd></div>
                 <div><dt className="text-[#9fb4d4]">实习经历</dt><dd className="whitespace-pre-wrap text-white">{profile.internship_experience ?? "未填写"}</dd></div>
                 <div><dt className="text-[#9fb4d4]">获奖情况</dt><dd className="whitespace-pre-wrap text-white">{profile.awards ?? "未填写"}</dd></div>
                 <div>
