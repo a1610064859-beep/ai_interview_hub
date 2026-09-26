@@ -15,6 +15,15 @@ DIM_KEYS = (
     "expression_fluency",
     "job_competence",
 )
+WEIGHT_KEYS = (*DIM_KEYS, "education_level", "school_tier")
+EDUCATION_SCORES = {"中职": 40.0, "高职/大专": 55.0, "本科": 70.0, "硕士": 85.0, "博士": 100.0}
+SCHOOL_TIER_SCORES = {
+    "C9/985": 100.0,
+    "211/双一流": 85.0,
+    "普通本科": 70.0,
+    "高职/大专": 55.0,
+    "中职/技校": 40.0,
+}
 
 ELIGIBILITY = "min_valid_dims_3"
 MIN_VALID_DIMS = 3
@@ -25,23 +34,43 @@ class JobWeightsInvalid(Exception):
 
 
 def parse_job_weights(dims_json: Any) -> dict[str, float]:
-    """校验并返回四维权重；失败抛 JobWeightsInvalid。"""
+    """Validate six-factor weights; legacy four-factor jobs get 60/20/20 defaults."""
     if not isinstance(dims_json, dict):
         raise JobWeightsInvalid("dims_json 必须为对象")
     weights = dims_json.get("weights")
     if not isinstance(weights, dict):
         raise JobWeightsInvalid("dims_json.weights 必须为对象")
-    if set(weights.keys()) != set(DIM_KEYS):
-        raise JobWeightsInvalid("weights 必须恰好含四维英文键")
+    weight_keys = set(weights.keys())
+    if weight_keys == set(DIM_KEYS):
+        legacy_values: dict[str, Decimal] = {}
+        legacy_total = Decimal("0")
+        for key in DIM_KEYS:
+            raw = weights[key]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise JobWeightsInvalid(f"权重 {key} 必须为 number")
+            value = Decimal(str(raw))
+            if not value.is_finite() or value < 0:
+                raise JobWeightsInvalid(f"权重 {key} 必须为有限的非负数")
+            legacy_values[key] = value
+            legacy_total += value
+        if abs(legacy_total - Decimal("1")) > Decimal("0.000001"):
+            raise JobWeightsInvalid("旧版四项权重之和必须为 1.0")
+        weights = {
+            **{key: float(value * Decimal("0.6")) for key, value in legacy_values.items()},
+            "education_level": 0.2,
+            "school_tier": 0.2,
+        }
+    elif weight_keys != set(WEIGHT_KEYS):
+        raise JobWeightsInvalid("weights 必须包含四项面试维度、学历和学校档次")
     values: dict[str, float] = {}
     total = Decimal("0")
-    for key in DIM_KEYS:
+    for key in WEIGHT_KEYS:
         raw = weights[key]
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise JobWeightsInvalid(f"权重 {key} 必须为 number")
         val = Decimal(str(raw))
-        if val <= 0:
-            raise JobWeightsInvalid(f"权重 {key} 必须 > 0")
+        if not val.is_finite() or val < 0:
+            raise JobWeightsInvalid(f"权重 {key} 必须为有限的非负数")
         values[key] = float(val)
         total += val
     if abs(total - Decimal("1")) > Decimal("0.000001"):
@@ -74,19 +103,27 @@ def valid_dim_count(dimensions: dict | None) -> int:
 
 
 def compute_weighted_score(
-    dimensions: dict | None, weights: dict[str, float]
+    dimensions: dict | None,
+    weights: dict[str, float],
+    education_level: str | None = None,
+    school_tier: str | None = None,
 ) -> float | None:
-    if not isinstance(dimensions, dict):
-        return None
     parts: list[tuple[Decimal, Decimal]] = []
     for key in DIM_KEYS:
-        cell = dimensions.get(key)
+        cell = dimensions.get(key) if isinstance(dimensions, dict) else None
         if not isinstance(cell, dict):
             continue
         score = cell.get("score")
-        if not is_valid_dimension_score(score):
+        if not is_valid_dimension_score(score) or weights.get(key, 0.0) <= 0:
             continue
         parts.append((Decimal(str(score)), Decimal(str(weights[key]))))
+    profile_scores = {
+        "education_level": EDUCATION_SCORES.get(education_level or ""),
+        "school_tier": SCHOOL_TIER_SCORES.get(school_tier or ""),
+    }
+    for key, score in profile_scores.items():
+        if score is not None and weights.get(key, 0.0) > 0:
+            parts.append((Decimal(str(score)), Decimal(str(weights[key]))))
     if not parts:
         return None
     weight_sum = sum(w for _, w in parts)
@@ -199,6 +236,7 @@ def build_candidate_item(
         "grade": user.grade,
         "student_no": user.student_no,
         "education_level": user.education_level,
+        "school_tier": user.school_tier,
         "session_id": sess.id,
         "report_id": report.id,
         "job_id": sess.job_id,
@@ -208,7 +246,9 @@ def build_candidate_item(
         "overall": report.overall,
         "dimensions": dimensions,
         "valid_dim_count": valid_dim_count(raw),
-        "weighted_score": compute_weighted_score(raw, weights),
+        "weighted_score": compute_weighted_score(
+            raw, weights, user.education_level, user.school_tier
+        ),
         "report_path": f"/reports/{sess.id}",
     }
 

@@ -56,6 +56,7 @@ def list_students(request: Request):
                     "grade": u.grade,
                     "student_no": u.student_no,
                     "education_level": u.education_level,
+                    "school_tier": u.school_tier,
                     "has_resume": bool(u.resume_storage_key),
                 }
                 for u in students

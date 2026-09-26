@@ -4,6 +4,8 @@ const apiMode = readApiMode(process.env.NEXT_PUBLIC_API_MODE);
 const backendUrl = apiMode === "real" ? requireBackendUrl() : "";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // Backend total budget is 300s; allow bounded subprocess cancellation and transport overhead.
   experimental: {
     proxyTimeout: readProxyTimeout(process.env.API_PROXY_TIMEOUT_MS),

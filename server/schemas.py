@@ -1,5 +1,5 @@
 from typing import Annotated, Literal, Union
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class QuestionResponse(BaseModel):
@@ -91,6 +91,7 @@ class StudentItem(BaseModel):
     grade: str | None = None
     student_no: str | None = None
     education_level: str | None = None
+    school_tier: str | None = None
     has_resume: bool = False
 
 
@@ -232,6 +233,24 @@ class RecruiterWeights(BaseModel):
     logic_structure: float
     expression_fluency: float
     job_competence: float
+    education_level: float
+    school_tier: float
+
+
+class RecruiterWeightsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    professional_match: float = Field(..., ge=0, le=1)
+    logic_structure: float = Field(..., ge=0, le=1)
+    expression_fluency: float = Field(..., ge=0, le=1)
+    job_competence: float = Field(..., ge=0, le=1)
+    education_level: float = Field(..., ge=0, le=1)
+    school_tier: float = Field(..., ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_total_weight(self):
+        if abs(sum(self.model_dump().values()) - 1.0) > 0.000001:
+            raise ValueError("六项权重之和必须为 1.0")
+        return self
 
 
 class CandidateDimensionScore(BaseModel):
@@ -249,6 +268,7 @@ class CandidateItem(BaseModel):
     grade: str | None = None
     student_no: str | None = None
     education_level: str | None = None
+    school_tier: str | None = None
     session_id: int
     report_id: int
     job_id: int

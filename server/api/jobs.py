@@ -13,6 +13,8 @@ from server.schemas import (
     JobParseRequest,
     JobParseResponse,
     JdQuestionItem,
+    RecruiterWeights,
+    RecruiterWeightsUpdate,
 )
 from server.services.jd_parse import JdParseUnavailableError, parse_jd_draft, parse_new_job_draft
 from server.services.question_bank import (
@@ -362,3 +364,30 @@ async def create_job_from_jd(
         questions=[JdQuestionItem(type=q.type, text=q.text) for q in draft.questions],
         terms=list(draft.terms),
     )
+
+
+@router.put("/{job_id}/weights", response_model=RecruiterWeights)
+def update_job_weights(
+    req: RecruiterWeightsUpdate,
+    job_id: int = Path(..., ge=1),
+    db: Session = Depends(get_db),
+    _recruiter=Depends(require_recruiter),
+):
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "JOB_NOT_FOUND", "message": "岗位不存在"},
+        )
+    dims_json = dict(job.dims_json or {})
+    dims_json["weights"] = req.model_dump()
+    job.dims_json = dims_json
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "JOB_WEIGHTS_SAVE_FAILED", "message": "权重保存失败，请稍后重试"},
+        ) from exc
+    return RecruiterWeights(scheme="job_dims_renorm", **req.model_dump())

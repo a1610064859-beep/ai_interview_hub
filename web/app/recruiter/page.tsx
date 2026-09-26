@@ -4,7 +4,7 @@ import * as echarts from "echarts";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppTheme } from "../../components/theme-provider";
-import { sortCandidatesByEducation } from "../../lib/candidate-sort";
+import { sortCandidatesByEducation, sortCandidatesBySchoolTier } from "../../lib/candidate-sort";
 
 import {
   DIMENSION_LABEL_MAP,
@@ -33,6 +33,7 @@ type Candidate = {
   grade: string | null;
   student_no: string | null;
   education_level: string | null;
+  school_tier: string | null;
   session_id: number;
   report_id: number;
   job_id: number;
@@ -53,6 +54,7 @@ type StudentOption = {
   major: string | null;
   grade: string | null;
   education_level: string | null;
+  school_tier: string | null;
 };
 
 type StudentProfile = StudentOption & {
@@ -72,6 +74,49 @@ type CandidatesPayload = {
   eligibility: string;
   candidates: Candidate[];
 };
+
+type WeightKey = "professional_match" | "logic_structure" | "expression_fluency" | "job_competence" | "education_level" | "school_tier";
+type WeightPercentages = Record<WeightKey, number>;
+const WEIGHT_KEYS: WeightKey[] = [
+  "professional_match",
+  "logic_structure",
+  "expression_fluency",
+  "job_competence",
+  "education_level",
+  "school_tier",
+];
+const WEIGHT_LABELS: Record<WeightKey, string> = {
+  professional_match: "专业匹配度",
+  logic_structure: "逻辑结构",
+  expression_fluency: "表达流畅度",
+  job_competence: "岗位素养",
+  education_level: "学历层次",
+  school_tier: "学校档次",
+};
+
+function parseWeightPercentages(weights: Record<string, unknown> | null): WeightPercentages | null {
+  if (!weights || WEIGHT_KEYS.some((key) => typeof weights[key] !== "number" || !Number.isFinite(weights[key]))) return null;
+  return Object.fromEntries(WEIGHT_KEYS.map((key) => [key, Math.round(Number(weights[key]) * 100)])) as WeightPercentages;
+}
+
+function rebalanceWeight(current: WeightPercentages, key: WeightKey, value: number): WeightPercentages {
+  const nextValue = Math.max(0, Math.min(100, Math.round(value)));
+  const otherKeys = WEIGHT_KEYS.filter((item) => item !== key);
+  const oldTotal = otherKeys.reduce((total, item) => total + current[item], 0);
+  const remaining = 100 - nextValue;
+  const next = { ...current, [key]: nextValue };
+  let assigned = 0;
+  otherKeys.forEach((item, index) => {
+    const portion = index === otherKeys.length - 1
+      ? remaining - assigned
+      : oldTotal > 0
+        ? Math.round((current[item] / oldTotal) * remaining)
+        : Math.floor(remaining / otherKeys.length);
+    next[item] = portion;
+    assigned += portion;
+  });
+  return next;
+}
 
 type ParseDraft = {
   job_id: number;
@@ -182,6 +227,7 @@ function parseCandidatesPayload(payload: unknown): CandidatesPayload {
       grade: typeof raw.grade === "string" ? raw.grade : null,
       student_no: typeof raw.student_no === "string" ? raw.student_no : null,
       education_level: typeof raw.education_level === "string" ? raw.education_level : null,
+      school_tier: typeof raw.school_tier === "string" ? raw.school_tier : null,
       session_id: Number(raw.session_id),
       report_id: Number(raw.report_id),
       job_id: Number(raw.job_id),
@@ -296,6 +342,7 @@ export default function RecruiterPage() {
         major: typeof raw.major === "string" ? raw.major : null,
         grade: typeof raw.grade === "string" ? raw.grade : null,
         education_level: typeof raw.education_level === "string" ? raw.education_level : null,
+        school_tier: typeof raw.school_tier === "string" ? raw.school_tier : null,
       };
     }));
   }, []);

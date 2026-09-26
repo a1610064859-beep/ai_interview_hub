@@ -34,6 +34,7 @@ def ensure_schema_upgrades(target_engine=None):
             for name, column_type in (
                 ("student_no", "VARCHAR(64)"),
                 ("education_level", "VARCHAR(32)"),
+                ("school_tier", "VARCHAR(32)"),
                 ("internship_experience", "TEXT"),
                 ("awards", "TEXT"),
                 ("resume_storage_key", "VARCHAR(80)"),

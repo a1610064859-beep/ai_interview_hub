@@ -19,6 +19,7 @@ data/resumes/
 .taromcp/
 .workbuddy/
 dist/
+web/.next-portable/
 
 memory/*.md
 !memory/TESTING.md
