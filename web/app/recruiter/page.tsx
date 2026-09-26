@@ -646,7 +646,7 @@ export default function RecruiterPage() {
       <section className="mb-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
         <h2 className="text-lg text-white">学生档案与名单导入</h2>
         <p className="mt-1 text-sm text-[#9fb4d4]">
-          下载固定 CSV 模板，填写脱敏姓名及学生编号；如填写简历文件名，同时选择同名的 .docx 或 .pdf 文件。重复编号更新档案，未完成训练的学生不会进入候选榜。
+          下载固定 CSV 模板，填写脱敏姓名及学生编号；简历文件名填写完整文件名。请将 CSV 引用的 .docx 或 .pdf 简历集中放入一个文件夹，再选择该文件夹；文件夹内只放 CSV 引用的简历，避免多传造成不匹配。重复编号更新档案，未完成训练的学生不会进入候选榜。
         </p>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <div className="rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-4">
@@ -658,8 +658,8 @@ export default function RecruiterPage() {
               <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="mt-2 block w-full text-xs text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#111827] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-[#1f2937]" onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)} />
             </label>
             <label className="mt-3 block text-sm text-[#9fb4d4]">
-              选择简历文件（可多选）
-              <input ref={resumeInputRef} type="file" multiple accept=".docx,.pdf" className="mt-2 block w-full text-xs text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#111827] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-[#1f2937]" onChange={(e) => setResumeFiles(Array.from(e.target.files ?? []))} />
+              选择简历文件夹
+              <input ref={(input) => { resumeInputRef.current = input; input?.setAttribute("webkitdirectory", ""); }} type="file" multiple accept=".docx,.pdf" className="mt-2 block w-full text-xs text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#111827] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-[#1f2937]" onChange={(e) => setResumeFiles(Array.from(e.target.files ?? []))} />
             </label>
             <button type="button" disabled={!csvFile || importBusy} onClick={() => void runImport()} className="mt-4 rounded-full bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:opacity-50">
               {importBusy ? "正在导入…" : "一键导入名单"}
