@@ -655,11 +655,11 @@ export default function RecruiterPage() {
             </a>
             <label className="mt-3 block text-sm text-[#9fb4d4]">
               选择学生名单 CSV
-              <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="mt-2 block w-full text-xs text-white" onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)} />
+              <input ref={csvInputRef} type="file" accept=".csv,text/csv" className="mt-2 block w-full text-xs text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#111827] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-[#1f2937]" onChange={(e) => setCsvFile(e.target.files?.[0] ?? null)} />
             </label>
             <label className="mt-3 block text-sm text-[#9fb4d4]">
               选择简历文件（可多选）
-              <input ref={resumeInputRef} type="file" multiple accept=".docx,.pdf" className="mt-2 block w-full text-xs text-white" onChange={(e) => setResumeFiles(Array.from(e.target.files ?? []))} />
+              <input ref={resumeInputRef} type="file" multiple accept=".docx,.pdf" className="mt-2 block w-full text-xs text-white file:mr-3 file:rounded-md file:border-0 file:bg-[#111827] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-[#1f2937]" onChange={(e) => setResumeFiles(Array.from(e.target.files ?? []))} />
             </label>
             <button type="button" disabled={!csvFile || importBusy} onClick={() => void runImport()} className="mt-4 rounded-full bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:opacity-50">
               {importBusy ? "正在导入…" : "一键导入名单"}
