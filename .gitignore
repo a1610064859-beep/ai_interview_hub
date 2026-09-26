@@ -18,6 +18,7 @@ data/resumes/
 .codegraph/
 .taromcp/
 .workbuddy/
+dist/
 
 memory/*.md
 !memory/TESTING.md

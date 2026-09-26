@@ -36,11 +36,12 @@ class LLMClient:
                 )
 
     def _chain(self, stage: str):
-        return [
+        chain = [
             ("flagship", getattr(self.settings, "flagship_model", None), getattr(self.settings, "flagship_base_url", None), getattr(self.settings, "flagship_api_key", None)),
             ("flash", getattr(self.settings, "flash_model", None), getattr(self.settings, "flash_base_url", None), getattr(self.settings, "flash_api_key", None)),
             ("local", getattr(self.settings, "local_model", None), getattr(self.settings, "local_base_url", None), getattr(self.settings, "local_api_key", None)),
         ]
+        return [entry for entry in chain if entry[1] and entry[2]]
 
     def _timeout(self, stage: str) -> float:
         if stage in {"scoring", "jd", "jd_parse"}:
@@ -81,9 +82,13 @@ class LLMClient:
                     remaining = deadline - time.monotonic()
                     attempt_timeout = remaining
                     if index < len(chain) - 1:
-                        # 旗舰 / 普通云端 / 本地按 1/2、1/3、1/6 分配阶段预算；
-                        # 前一模型挂起时仍给后续模型留时间。
-                        shares = (0.5, 1 / 3, 1 / 6)
+                        # 仅为已配置的后续模型保留时间，空配置不能占用当前 API 的预算。
+                        shares_by_count = {
+                            1: (1.0,),
+                            2: (2 / 3, 1 / 3),
+                            3: (0.5, 1 / 3, 1 / 6),
+                        }
+                        shares = shares_by_count[len(chain)]
                         total_budget = self._timeout(stage)
                         fallback_reserve = total_budget * sum(shares[index + 1:])
                         attempt_timeout = min(total_budget * shares[index], remaining - fallback_reserve)

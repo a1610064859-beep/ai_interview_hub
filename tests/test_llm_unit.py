@@ -203,6 +203,30 @@ def test_timeout_forwarded_and_stage_selection(monkeypatch):
     assert seen_timeouts["flagship_m"] == pytest.approx(30.0, abs=0.1)
 
 
+def test_unconfigured_fallbacks_do_not_steal_api_timeout(monkeypatch):
+    seen_timeouts = {}
+
+    class TimeoutRecorder:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    seen_timeouts[kwargs["model"]] = kwargs["timeout"]
+                    return FakeResp('{"value": "ok"}')
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", lambda **x: TimeoutRecorder(**x))
+    settings = make_settings(
+        flash_model=None, flash_base_url=None, flash_api_key=None,
+        local_model=None, local_base_url=None, local_api_key=None,
+    )
+
+    asyncio.run(LLMClient(settings).chat_json("orchestration", [], Out))
+    assert seen_timeouts == {"flagship_m": pytest.approx(6.0, abs=0.1)}
+
+
 def test_local_uses_json_schema_response_format(monkeypatch, tmp_path):
     formats = []
 
@@ -430,10 +454,8 @@ def test_missing_config_no_duplicate_records():
     with pytest.raises(LLMError, match="all llm attempts failed"):
         asyncio.run(client.chat_json("orchestration", [], Out))
 
-    # 三个模型各产生 1 条 missing_config 记录，绝不重复
-    assert len(client.records) == 3
-    assert [r["error"] for r in client.records] == ["missing_config"] * 3
-    assert all(r["ttft_ms"] is None for r in client.records)
+    # 未配置的模型不会进入调用链，也不会产生误导性的失败记录
+    assert client.records == []
 
 
 # 数据库与模型可空性测试
