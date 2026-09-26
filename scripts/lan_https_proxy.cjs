@@ -86,12 +86,24 @@ secureServer.on("upgrade", (req, socket, head) => {
 });
 
 const certServer = http.createServer((req, res) => {
+  if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
+    const body = req.url === "/health"
+      ? "AI Interview Hub LAN connection OK\n"
+      : `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 面试仓局域网连接</title><body><h1>局域网连接正常</h1><p><a href="/lan-ca.cer">下载局域网证书</a></p><p><a href="https://${lanIp}:${httpsPort}/">打开 AI 面试仓</a></p></body></html>`;
+    res.writeHead(200, {
+      "content-type": req.url === "/health" ? "text/plain; charset=utf-8" : "text/html; charset=utf-8",
+      "content-length": Buffer.byteLength(body),
+      "cache-control": "no-store",
+    });
+    res.end(body);
+    return;
+  }
   if (req.method !== "GET" || req.url !== "/lan-ca.cer") {
     res.writeHead(404).end();
     return;
   }
   res.writeHead(200, {
-    "content-type": "application/x-x509-ca-cert",
+    "content-type": "application/octet-stream",
     "content-disposition": 'attachment; filename="lan-ca.cer"',
     "content-length": caCert.length,
     "cache-control": "no-store",
