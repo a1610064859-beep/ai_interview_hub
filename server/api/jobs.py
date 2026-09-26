@@ -7,8 +7,14 @@ from sqlalchemy.orm import Session
 from server.db import SessionLocal
 from server.api.auth import require_recruiter
 from server.models import Job, Question, Session as InterviewSession
-from server.schemas import JobParseRequest, JobParseResponse, JdQuestionItem
-from server.services.jd_parse import JdParseUnavailableError, parse_jd_draft
+from server.schemas import (
+    JobCreateFromJDRequest,
+    JobCreateFromJDResponse,
+    JobParseRequest,
+    JobParseResponse,
+    JdQuestionItem,
+)
+from server.services.jd_parse import JdParseUnavailableError, parse_jd_draft, parse_new_job_draft
 from server.services.question_bank import (
     INTERVIEW_QUESTION_COUNTS,
     QuestionBankIncompleteError,
@@ -16,6 +22,16 @@ from server.services.question_bank import (
 )
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+DEFAULT_JOB_DIMS = {
+    "labels": ["专业匹配度", "逻辑结构", "表达流畅度", "岗位素养"],
+    "weights": {
+        "professional_match": 0.25,
+        "logic_structure": 0.25,
+        "expression_fluency": 0.25,
+        "job_competence": 0.25,
+    },
+}
 
 
 class QuestionCreateRequest(BaseModel):
@@ -150,6 +166,8 @@ def list_job_questions(job_id: int = Path(..., ge=1), db: Session = Depends(get_
         .order_by(Question.id.asc())
         .all()
     )
+
+
     try:
         selected_ids = active_question_ids(db, job_id)
     except QuestionBankIncompleteError:
@@ -290,3 +308,57 @@ def delete_job_question(
     db.delete(question)
     db.commit()
     return Response(status_code=204)
+
+
+@router.post("/create-from-jd", response_model=JobCreateFromJDResponse, status_code=201)
+async def create_job_from_jd(
+    req: JobCreateFromJDRequest,
+    db: Session = Depends(get_db),
+    _recruiter=Depends(require_recruiter),
+):
+    try:
+        draft = await parse_new_job_draft(jd_text=req.jd_text)
+    except JdParseUnavailableError:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "JD_PARSE_UNAVAILABLE",
+                "message": "JD 解析服务暂时不可用，请稍后重试",
+            },
+        )
+
+    job = Job(
+        family=draft.family,
+        title=draft.title,
+        jd_digest=req.jd_text,
+        terms_json=list(draft.terms),
+        dims_json=DEFAULT_JOB_DIMS,
+    )
+    try:
+        db.add(job)
+        db.flush()
+        db.add_all(
+            [
+                Question(job_id=job.id, type=question.type, text=question.text)
+                for question in draft.questions
+            ]
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "JOB_CREATE_FAILED",
+                "message": "岗位及题库保存失败，请重试",
+            },
+        ) from exc
+
+    return JobCreateFromJDResponse(
+        job_id=job.id,
+        family=job.family,
+        title=job.title,
+        dims=draft.dims,
+        questions=[JdQuestionItem(type=q.type, text=q.text) for q in draft.questions],
+        terms=list(draft.terms),
+    )

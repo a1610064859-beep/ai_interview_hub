@@ -197,6 +197,28 @@ class JobParseResponse(BaseModel):
     terms: list[str]
 
 
+class JobCreateFromJDRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    jd_text: str = Field(...)
+
+    @field_validator("jd_text")
+    @classmethod
+    def validate_jd_text(cls, v: str) -> str:
+        stripped = v.strip()
+        if not (20 <= len(stripped) <= 20000):
+            raise ValueError("jd_text 去除首尾空白后长度必须在 20 至 20000 字符之间")
+        return stripped
+
+
+class JobCreateFromJDResponse(BaseModel):
+    job_id: int
+    family: str
+    title: str
+    dims: list[str]
+    questions: list[JdQuestionItem]
+    terms: list[str]
+
+
 class RecruiterCohort(BaseModel):
     model_config = ConfigDict(extra="forbid")
     input_mode: Literal["text", "voice"]

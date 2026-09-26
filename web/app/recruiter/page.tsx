@@ -75,8 +75,8 @@ type CandidatesPayload = {
 
 type ParseDraft = {
   job_id: number;
-  job_id_source: string;
-  applied: boolean;
+  family: string;
+  title: string;
   dims: string[];
   questions: { type: string; text: string }[];
   terms: string[];
@@ -233,6 +233,9 @@ export default function RecruiterPage() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [jdText, setJdText] = useState("");
   const [parseDraft, setParseDraft] = useState<ParseDraft | null>(null);
+  const [parseBusy, setParseBusy] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [createdJd, setCreatedJd] = useState<string | null>(null);
   const [bankQuestions, setBankQuestions] = useState<BankQuestion[]>([]);
   const [bankLoading, setBankLoading] = useState(false);
   const [bankBusy, setBankBusy] = useState(false);
@@ -549,23 +552,37 @@ export default function RecruiterPage() {
   }, [selected, theme]);
 
   async function runParse() {
-    if (jobId === null) return;
-    setBusy(true);
-    setError(null);
+    const trimmedJd = jdText.trim();
+    if (parseBusy || trimmedJd.length < 20 || trimmedJd.length > 20000) return;
+    setParseBusy(true);
+    setParseError(null);
     setParseDraft(null);
     try {
-      const resp = await fetch("/api/jobs/parse", {
+      const resp = await fetch("/api/jobs/create-from-jd", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, jd_text: jdText }),
+        body: JSON.stringify({ jd_text: trimmedJd }),
       });
       if (!resp.ok) throw new Error(await readApiError(resp));
       const raw: unknown = await resp.json();
       if (!isRecord(raw)) throw new Error("解析响应非法");
+      const createdJobId = Number(raw.job_id);
+      if (!Number.isInteger(createdJobId) || typeof raw.family !== "string" || typeof raw.title !== "string") {
+        throw new Error("新岗位信息不完整");
+      }
+      const createdJob = {
+        id: createdJobId,
+        family: raw.family,
+        title: raw.title,
+        jdDigest: trimmedJd,
+      };
+      setJobs((current) => [...current.filter((job) => job.id !== createdJobId), createdJob].sort((a, b) => a.id - b.id));
+      setJobId(createdJobId);
+      setCreatedJd(trimmedJd);
       setParseDraft({
-        job_id: Number(raw.job_id),
-        job_id_source: String(raw.job_id_source),
-        applied: Boolean(raw.applied),
+        job_id: createdJobId,
+        family: raw.family,
+        title: raw.title,
         dims: Array.isArray(raw.dims) ? raw.dims.map(String) : [],
         questions: Array.isArray(raw.questions)
           ? raw.questions.map((q) => {
@@ -576,9 +593,9 @@ export default function RecruiterPage() {
         terms: Array.isArray(raw.terms) ? raw.terms.map(String) : [],
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "JD 解析失败");
+      setParseError(e instanceof Error ? e.message : "JD 解析失败");
     } finally {
-      setBusy(false);
+      setParseBusy(false);
     }
   }
 
@@ -685,47 +702,89 @@ export default function RecruiterPage() {
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_minmax(280px,320px)]">
         <section className="rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
-          <h2 className="text-lg text-white">岗位与 JD 草案</h2>
+          <h2 className="text-lg text-white">粘贴 JD 新建岗位</h2>
+          <p className="mt-2 text-xs leading-5 text-[#9fb4d4]">
+            解析后会创建岗位并写入题库；系统从 JD 提取岗位类别和名称。评分仍使用四个固定维度，新岗位默认等权。
+          </p>
           <label className="mt-3 flex flex-col gap-2 text-sm text-[#9fb4d4]">
-            种子岗位
-            <select
-              className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
-              value={jobId ?? ""}
-              onChange={(e) => setJobId(e.target.value ? Number(e.target.value) : null)}
-            >
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.family} · {j.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="mt-3 flex flex-col gap-2 text-sm text-[#9fb4d4]">
-            粘贴 JD（解析不写库、不扩岗）
+            岗位 JD
             <textarea
               className="min-h-28 rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-sm text-white"
               value={jdText}
-              onChange={(e) => setJdText(e.target.value)}
-              placeholder="至少 20 字…"
+              disabled={parseBusy}
+              onChange={(e) => {
+                setJdText(e.target.value);
+                setParseDraft(null);
+                setParseError(null);
+              }}
+              placeholder="粘贴岗位职责和任职要求…"
             />
           </label>
+          <p className="mt-2 text-xs text-[#8ea4c7]" aria-live="polite">
+            {jdText.trim().length < 20
+              ? `JD 至少需要 20 字，当前 ${jdText.trim().length} 字。`
+              : jdText.trim().length > 20000
+                ? `JD 最多 20000 字，当前 ${jdText.trim().length} 字。`
+                : `已输入 ${jdText.trim().length} 字，可解析。`}
+          </p>
           <button
             type="button"
-            disabled={busy || jobId === null || jdText.trim().length < 20}
+            disabled={parseBusy || jdText.trim().length < 20 || jdText.trim().length > 20000 || createdJd === jdText.trim()}
             className="mt-3 rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:opacity-50"
             onClick={() => void runParse()}
           >
-            解析草案
+            {parseBusy ? "正在解析并创建…" : createdJd === jdText.trim() ? "此 JD 已创建" : "解析并创建岗位"}
           </button>
+          {parseBusy ? (
+            <p className="mt-3 rounded-lg border border-[#2f6fed]/40 bg-[#071326] px-3 py-2 text-sm text-[#a9cbff]" role="status" aria-live="polite">
+              正在分析 JD、生成题库并保存新岗位，请稍候…
+            </p>
+          ) : null}
+          {parseError ? (
+            <p className="mt-3 rounded-lg border border-[#ff8a2a]/60 bg-[#2a1608] px-3 py-2 text-sm text-[#ffd0a8]" role="alert">
+              JD 解析失败：{parseError}
+            </p>
+          ) : null}
           {parseDraft ? (
-            <div className="mt-4 space-y-2 text-xs text-[#9fb4d4]">
-              <p>
-                job_id={parseDraft.job_id} · source={parseDraft.job_id_source} · applied=
-                {String(parseDraft.applied)}
+            <div className="mt-4 space-y-4 rounded-xl border border-[#2f6fed]/40 bg-[#071326] p-3" aria-live="polite">
+              <p className="text-sm font-medium text-emerald-300" role="status">
+                已创建岗位 #{parseDraft.job_id} · {parseDraft.family} · {parseDraft.title}
               </p>
-              <p>dims: {parseDraft.dims.join(" / ")}</p>
-              <p>questions: {parseDraft.questions.length} 题（不入库）</p>
-              <p>terms: {parseDraft.terms.join("、") || "—"}</p>
+              <p className="text-xs leading-5 text-[#9fb4d4]">
+                岗位和题库已保存。以下 JD 建议维度仅供参考；面试报告仍按固定四维评分。
+              </p>
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[#7eb6ff]">JD 建议评估维度</h3>
+                {parseDraft.dims.length ? (
+                  <ul className="mt-2 flex flex-wrap gap-2">
+                    {parseDraft.dims.map((dim, index) => (
+                      <li key={`${dim}-${index}`} className="rounded-full border border-[#2f6fed]/50 bg-[#0c1730] px-2.5 py-1 text-xs text-[#d7e3f7]">
+                        {dim}
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="mt-2 text-sm text-[#9fb4d4]">没有生成评估维度。</p>}
+              </div>
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[#7eb6ff]">已写入题库（{parseDraft.questions.length} 题）</h3>
+                {parseDraft.questions.length ? (
+                  <ol className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {parseDraft.questions.map((question, index) => (
+                      <li key={`${question.type}-${index}`} className="rounded-lg border border-[#2f6fed]/25 bg-[#050912]/70 p-2.5">
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="text-xs text-[#7eb6ff]">{index + 1}.</span>
+                          <span className="rounded-full bg-[#172b4c] px-2 py-0.5 text-[11px] text-[#a9cbff]">{question.type}</span>
+                        </div>
+                        <p className="text-sm leading-6 text-[#d7e3f7]">{question.text}</p>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <p className="mt-2 text-sm text-[#9fb4d4]">没有生成面试题。</p>}
+              </div>
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[#7eb6ff]">专业术语</h3>
+                <p className="mt-2 text-sm leading-6 text-[#d7e3f7]">{parseDraft.terms.join("、") || "未提取到专业术语。"}</p>
+              </div>
             </div>
           ) : null}
         </section>
