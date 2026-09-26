@@ -332,7 +332,7 @@ async def create_job_from_jd(
         title=draft.title,
         jd_digest=req.jd_text,
         terms_json=list(draft.terms),
-        dims_json=DEFAULT_JOB_DIMS,
+        dims_json={**DEFAULT_JOB_DIMS, "jd_suggestions": list(draft.dims)},
     )
     try:
         db.add(job)
