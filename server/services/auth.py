@@ -13,7 +13,15 @@ from server.models import AuthSession, User
 
 
 _PASSWORD_ITERATIONS = 600_000
-_EMAIL_PATTERN = re.compile(r"[^@\s]{1,64}@[^@\s.]{1,190}(?:\.[^@\s.]{1,63})+\Z")
+_EMAIL_LOCAL_PATTERN = re.compile(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}\Z", re.IGNORECASE)
+_DOMAIN_LABEL_PATTERN = re.compile(r"[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\Z", re.IGNORECASE)
+_SUPPORTED_EMAIL_TLDS = frozenset({
+    "aero", "ai", "app", "asia", "biz", "cat", "cloud", "co", "com", "coop",
+    "dev", "edu", "email", "gov", "info", "int", "io", "jobs", "me", "mil",
+    "mobi", "museum", "name", "net", "online", "org", "post", "pro", "shop",
+    "site", "store", "tech", "tel", "top", "travel", "tv", "vip", "wiki", "work",
+    "xyz", "xxx",
+})
 
 
 def hash_password(password: str) -> str:
@@ -45,8 +53,31 @@ def verify_password(password: str, encoded: str | None) -> bool:
 
 def normalize_email(value: str) -> str:
     normalized = value.strip().lower()
-    if len(normalized) > 254 or not _EMAIL_PATTERN.fullmatch(normalized):
+    if len(normalized) > 254 or normalized.count("@") != 1:
         raise ValueError("邮箱格式不正确")
+    local, domain = normalized.split("@", 1)
+    labels = domain.split(".")
+    if (
+        not _EMAIL_LOCAL_PATTERN.fullmatch(local)
+        or local.startswith(".")
+        or local.endswith(".")
+        or ".." in local
+        or len(domain) > 253
+        or len(labels) < 2
+        or any(not _DOMAIN_LABEL_PATTERN.fullmatch(label) for label in labels)
+        or len(labels[-1]) < 2
+        or not labels[-1].isascii()
+        or not labels[-1].isalpha()
+    ):
+        raise ValueError("邮箱格式不正确")
+    return normalized
+
+
+def validate_registration_email(value: str) -> str:
+    normalized = normalize_email(value)
+    tld = normalized.rsplit(".", 1)[-1]
+    if len(tld) != 2 and tld not in _SUPPORTED_EMAIL_TLDS:
+        raise ValueError("邮箱域名后缀暂不支持，请检查后使用常见邮箱后缀")
     return normalized
 
 

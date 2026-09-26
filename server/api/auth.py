@@ -40,7 +40,7 @@ class StudentRegisterRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def valid_email(cls, value: str) -> str:
-        return auth_service.normalize_email(value)
+        return auth_service.validate_registration_email(value)
 
     @field_validator("name", "major", "grade")
     @classmethod
@@ -63,7 +63,7 @@ class RecruiterRegisterRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def valid_email(cls, value: str) -> str:
-        return auth_service.normalize_email(value)
+        return auth_service.validate_registration_email(value)
 
     @field_validator("organization_name", "contact_name")
     @classmethod
