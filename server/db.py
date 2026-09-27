@@ -48,7 +48,8 @@ def ensure_schema_upgrades(target_engine=None):
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {column_type}"))
             if add_student_no:
                 conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_student_no ON users(student_no)"))
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_login_email ON users(login_email)"))
+            conn.execute(text("DROP INDEX IF EXISTS ux_users_login_email"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_users_role_login_email ON users(role, login_email)"))
 
         result = conn.execute(text("PRAGMA table_info(sessions)"))
         cols = {row[1] for row in result.fetchall()}

@@ -5,7 +5,7 @@ from .db import Base
 
 class User(Base):
     __tablename__="users"
-    __table_args__=(Index("ux_users_login_email", "login_email", unique=True),)
+    __table_args__=(Index("ux_users_role_login_email", "role", "login_email", unique=True),)
     id: Mapped[int]=mapped_column(Integer, primary_key=True)
     role: Mapped[str]=mapped_column(String(32))
     name_masked: Mapped[str|None]=mapped_column(String(128), nullable=True)

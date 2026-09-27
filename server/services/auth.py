@@ -92,7 +92,7 @@ def register_student(
     db: DbSession, email: str, name: str, major: str, grade: str, password: str
 ) -> User:
     email = normalize_email(email)
-    if db.query(User.id).filter(User.login_email == email).first() is not None:
+    if db.query(User.id).filter(User.login_email == email, User.role == "student").first() is not None:
         raise ValueError("注册信息无效或邮箱已注册")
     name = normalize_profile_field(name, "姓名")
     major = normalize_profile_field(major, "专业")
@@ -124,7 +124,7 @@ def register_recruiter(
     password: str,
 ) -> User:
     email = normalize_email(email)
-    if db.query(User.id).filter(User.login_email == email).first() is not None:
+    if db.query(User.id).filter(User.login_email == email, User.role == "recruiter").first() is not None:
         raise ValueError("注册信息无效或邮箱已注册")
     user = User(
         role="recruiter",

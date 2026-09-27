@@ -139,6 +139,49 @@ def test_student_registration_rejects_duplicate_email_and_injection(auth_client)
     assert injection.status_code == 401
 
 
+def test_student_and_recruiter_can_share_email_and_log_in_by_role(auth_client):
+    email = "shared@example.cn"
+    student_password = "safe-student-passphrase-2026"
+    recruiter_password = "safe-recruiter-passphrase-2026"
+    student = auth_client.post(
+        "/api/auth/register/student",
+        json={
+            "email": email,
+            "name": "李同学",
+            "major": "车辆工程",
+            "grade": "大三",
+            "password": student_password,
+        },
+    )
+    recruiter = auth_client.post(
+        "/api/auth/register/recruiter",
+        json={
+            "email": email,
+            "organization_name": "示例汽车科技",
+            "contact_name": "招聘负责人",
+            "password": recruiter_password,
+        },
+    )
+
+    assert student.status_code == 201
+    assert student.json()["user"]["role"] == "student"
+    assert recruiter.status_code == 201
+    assert recruiter.json()["user"]["role"] == "recruiter"
+
+    student_login = auth_client.post(
+        "/api/auth/login/student",
+        json={"email": email, "password": student_password},
+    )
+    recruiter_login = auth_client.post(
+        "/api/auth/login/recruiter",
+        json={"email": email, "password": recruiter_password},
+    )
+    assert student_login.status_code == 200
+    assert student_login.json()["user"]["role"] == "student"
+    assert recruiter_login.status_code == 200
+    assert recruiter_login.json()["user"]["role"] == "recruiter"
+
+
 def test_protected_routes_require_authentication(auth_client):
     assert auth_client.get("/api/recruiter/candidates?job_id=1").status_code == 401
     assert auth_client.get("/api/students").status_code == 401
