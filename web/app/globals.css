@@ -410,11 +410,13 @@ html[data-theme="day"] [class*="bg-[#050912]"],
 html[data-theme="day"] [class*="bg-[#070b14]"],
 html[data-theme="day"] [class*="bg-[#0c1730]"],
 html[data-theme="day"] [class*="bg-[#071225]"],
+html[data-theme="day"] [class*="bg-[#071326]"],
 html[data-theme="day"] [class*="bg-[#1a1208]"] {
   background-color: var(--app-surface-solid) !important;
 }
 
 html[data-theme="day"] [class*="bg-[#1a2c54]"],
+html[data-theme="day"] [class*="bg-[#172b4c]"],
 html[data-theme="day"] [class*="bg-[#1f293d]"] {
   background-color: #f1effb !important;
 }
@@ -488,11 +490,13 @@ html[data-theme="day"] [class*="text-emerald-200"] {
 
 html[data-theme="day"] [class*="text-[#9fb4d4]"],
 html[data-theme="day"] [class*="text-[#b7c8e2]"],
-html[data-theme="day"] [class*="text-[#8292aa]"] {
+html[data-theme="day"] [class*="text-[#8292aa]"],
+html[data-theme="day"] [class*="text-[#8ea4c7]"] {
   color: var(--app-muted) !important;
 }
 
 html[data-theme="day"] [class*="text-[#7eb6ff]"],
+html[data-theme="day"] [class*="text-[#a9cbff]"],
 html[data-theme="day"] [class*="text-[#8fdcff]"],
 html[data-theme="day"] [class*="text-[#bcd7ff]"],
 html[data-theme="day"] [class*="text-[#ff8a2a]"] {
