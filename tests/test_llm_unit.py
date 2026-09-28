@@ -259,6 +259,37 @@ def test_local_uses_json_schema_response_format(monkeypatch, tmp_path):
     ]
 
 
+def test_deepseek_feedback_disables_thinking_only_for_that_stage(monkeypatch, tmp_path):
+    requests = []
+
+    class CaptureClient:
+        def __init__(self, **kwargs):
+            pass
+
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kwargs):
+                    requests.append(kwargs)
+                    return FakeResp()
+
+    monkeypatch.setattr("server.services.llm.AsyncOpenAI", CaptureClient)
+    client = LLMClient(make_settings(
+        flagship_base_url="https://api.deepseek.com",
+        flagship_model="deepseek-flash",
+        flash_model=None,
+        local_model=None,
+        llm_usage_log_path=str(tmp_path / "usage.jsonl"),
+    ))
+
+    asyncio.run(client.chat_json("answer_feedback", [], Out))
+    asyncio.run(client.chat_json("orchestration", [], Out))
+
+    assert requests[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert requests[0]["max_tokens"] == 512
+    assert "extra_body" not in requests[1]
+
+
 def test_scoring_primary_timeout_still_reaches_local_fallback(monkeypatch, tmp_path):
     calls = []
 

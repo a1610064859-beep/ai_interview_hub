@@ -125,6 +125,8 @@ def test_feedback_scores_latest_answer_without_advancing_session(monkeypatch):
     assert calls[0][0] == "answer_feedback"
     assert calls[0][2].__name__ == "AnswerFeedbackLlmResponse"
     assert "不评估语速" in calls[0][1][0]["content"]
+    assert "practice_score" in calls[0][1][0]["content"]
+    assert "quote_candidate" in calls[0][1][1]["content"]
     with SessionLocal() as db:
         assert db.query(Answer).filter(Answer.session_id == 1).count() == 2
         assert db.query(Report).filter(Report.session_id == 1).count() == 1

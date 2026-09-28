@@ -4,6 +4,7 @@ import time
 import logging
 from pathlib import Path
 from typing import Type, TypeVar
+from urllib.parse import urlparse
 from pydantic import BaseModel, ValidationError
 from openai import AsyncOpenAI
 
@@ -103,12 +104,17 @@ class LLMClient:
                                 "schema": response_model.model_json_schema(),
                             },
                         }
+                    request_options = {}
+                    if stage == "answer_feedback" and urlparse(url).hostname == "api.deepseek.com":
+                        request_options["extra_body"] = {"thinking": {"type": "disabled"}}
+                        request_options["max_tokens"] = 512
                     client = AsyncOpenAI(base_url=url, api_key=key, max_retries=0)
                     resp = await asyncio.wait_for(client.chat.completions.create(
                         model=model,
                         messages=messages,
                         response_format=response_format,
                         timeout=attempt_timeout,
+                        **request_options,
                     ), timeout=attempt_timeout)
                     # Non-streaming client: this is the first point at which response content is available.
                     record["ttft_ms"] = round((time.monotonic() - started) * 1000, 1)

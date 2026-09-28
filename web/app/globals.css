@@ -565,6 +565,10 @@ html[data-theme="day"] .answer-feedback-panel .feedback-learning span {
   color: #92420c !important;
 }
 
+html[data-theme="day"] .answer-feedback-panel .feedback-quote p {
+  color: #f5f7ff !important;
+}
+
 html[data-theme="day"] .site-shell button {
   border-color: rgba(255, 255, 255, 0.58);
   background-image: linear-gradient(105deg, #6255ed 0%, #8b58ed 56%, #c45add 100%);
