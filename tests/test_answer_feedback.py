@@ -118,6 +118,7 @@ def test_feedback_scores_latest_answer_without_advancing_session(monkeypatch):
             "evidence_quote": "连续三轮都没有丢包",
             "improvement_suggestion": "按STAR顺序补充任务背景、个人行动和量化结果。",
             "learning_topic": "star",
+            "basis": "ai",
         },
     }
     assert len(calls) == 1
@@ -145,9 +146,10 @@ def test_feedback_rejects_quote_not_present_in_answer(monkeypatch):
 
     assert response.status_code == 200
     feedback = response.json()["feedback"]
-    assert feedback["practice_score"] is None
-    assert feedback["evidence_quote"] is None
-    assert feedback["problem_analysis"]
+    assert 0 < feedback["practice_score"] <= 75
+    assert feedback["evidence_quote"] in "我复跑同一组用例，确认连续三轮都没有丢包。"
+    assert feedback["basis"] == "rule"
+    assert "结构" in feedback["problem_analysis"]
     assert feedback["improvement_suggestion"]
 
 
@@ -160,10 +162,23 @@ def test_feedback_degrades_safely_when_llm_fails(monkeypatch):
 
     assert response.status_code == 200
     feedback = response.json()["feedback"]
-    assert feedback["practice_score"] is None
-    assert feedback["evidence_quote"] is None
-    assert "暂无法可靠评价" in feedback["problem_analysis"]
+    assert 0 < feedback["practice_score"] <= 75
+    assert feedback["evidence_quote"] in "我复跑同一组用例，确认连续三轮都没有丢包。"
+    assert feedback["basis"] == "rule"
+    assert "AI评分暂不可用" in feedback["problem_analysis"]
     assert feedback["learning_topic"] == "followup"
+
+
+def test_rule_estimate_does_not_treat_job_title_as_completed_action():
+    from server.services.answer_feedback import _fallback
+
+    answer = "我是智能车辆工程专业的学生，我想从事驾驶测试工作，因为我想提升专业水平。"
+    feedback = _fallback("请介绍专业背景和求职动机。", answer, False)
+
+    assert feedback.basis == "rule"
+    assert feedback.practice_score == 55
+    assert "亲自采取的行动" in feedback.problem_analysis
+    assert feedback.evidence_quote in answer
 
 
 @pytest.mark.parametrize("sid,expected_status", [(2, 403), (3, 409)])

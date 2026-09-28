@@ -11,6 +11,7 @@ export type AnswerFeedback = {
     evidenceQuote: string | null;
     improvementSuggestion: string;
     learningTopic: LearningTopic;
+    basis: "ai" | "rule";
   };
 };
 
@@ -60,7 +61,8 @@ export function parseAnswerFeedbackResponse(payload: unknown): ParseAnswerFeedba
     typeof feedback.improvement_suggestion !== "string" ||
     !feedback.improvement_suggestion.trim() ||
     typeof feedback.learning_topic !== "string" ||
-    !learningTopics.has(feedback.learning_topic as LearningTopic)
+    !learningTopics.has(feedback.learning_topic as LearningTopic) ||
+    (feedback.basis !== "ai" && feedback.basis !== "rule")
   ) {
     return invalidFeedback();
   }
@@ -78,6 +80,7 @@ export function parseAnswerFeedbackResponse(payload: unknown): ParseAnswerFeedba
         evidenceQuote: typeof evidenceQuote === "string" ? evidenceQuote.trim() : null,
         improvementSuggestion: feedback.improvement_suggestion.trim(),
         learningTopic: feedback.learning_topic as LearningTopic,
+        basis: feedback.basis,
       },
     },
   };

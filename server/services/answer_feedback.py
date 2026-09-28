@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,10 @@ class AnswerFeedbackLlmResponse(BaseModel):
     learning_topic: LearningTopic
 
 
+class AnswerFeedbackResult(AnswerFeedbackLlmResponse):
+    basis: Literal["ai", "rule"]
+
+
 class AnswerFeedbackResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -26,7 +31,7 @@ class AnswerFeedbackResponse(BaseModel):
     q_seq: int
     is_followup: bool
     question_text: str
-    feedback: AnswerFeedbackLlmResponse
+    feedback: AnswerFeedbackResult
 
 
 _SYSTEM_PROMPT = """你是面向智能汽车岗位新生的面试练习教练。只分析本题回答内容，不评估语速、停顿、口音、声音或其他语音表现。
@@ -36,20 +41,54 @@ learning_topic 只能使用 hear、star、intro、followup、unknown、review �
 对文本转写不可推断语速、停顿、口头表达流畅度。不要重复题目，不要编造回答中没有的经历或事实。"""
 
 
-def _fallback(is_followup: bool) -> AnswerFeedbackLlmResponse:
-    topic: LearningTopic = "followup" if is_followup else "unknown"
-    return AnswerFeedbackLlmResponse(
-        practice_score=None,
-        problem_analysis="暂无法可靠评价本题回答。建议先确认回答直接回应了题目，并整理出关键做法与结果。",
-        evidence_quote=None,
-        improvement_suggestion="用一两句话说明你采取的行动和可验证的结果，再尝试回答本题。",
+def _fallback(question_text: str, answer_text: str, is_followup: bool) -> AnswerFeedbackResult:
+    """Give a bounded structure check when the model cannot assess the answer."""
+    answer = answer_text.strip()
+    is_intro = any(word in question_text for word in ("介绍", "专业背景", "为什么想"))
+    topic: LearningTopic = "followup" if is_followup else ("intro" if is_intro else "star")
+    if len(answer) < 8:
+        return AnswerFeedbackResult(
+            practice_score=None,
+            problem_analysis="AI评分暂不可用，且本题回答过短，无法做可靠的结构估分。",
+            evidence_quote=None,
+            improvement_suggestion="先直接回答题目，再补充一项你亲自完成的行动和结果。",
+            learning_topic=topic,
+            basis="rule",
+        )
+
+    has_background = bool(re.search(r"专业|学校|课程|项目|实习|经历|背景", answer))
+    has_action = bool(re.search(r"参与|负责|设计|开发|调试|定位|分析|实现|验证|修复|搭建|优化|解决|复跑|测试了|测试过|进行.{0,4}测试", answer))
+    has_result = bool(re.search(r"结果|最终|完成|通过|发现|降低|提高|提升了|减少|准确率|成功|\d+(?:\.\d+)?%", answer))
+    has_reason = bool(re.search(r"因为|因此|所以|希望|想从事|感兴趣", answer))
+    score = min(75, 30 + 10 * (len(answer) >= 20) + 10 * (len(answer) >= 60)
+                + 10 * has_background + 10 * has_action + 10 * has_result + 5 * has_reason)
+    quote = re.split(r"[。！？\n]", answer, maxsplit=1)[0][:25] or answer[:25]
+    missing = []
+    if is_intro and not has_background:
+        missing.append("专业或学习背景")
+    if not has_action:
+        missing.append("亲自采取的行动")
+    if not has_result:
+        missing.append("可以验证的结果")
+    analysis = "AI评分暂不可用；以下仅按回答文字检查结构，不判断专业内容是否正确。"
+    analysis += "目前还缺少" + "、".join(missing) + "。" if missing else "回答已包含背景、行动和结果。"
+    suggestion = (
+        "按“专业背景→相关经历→个人行动→结果→岗位动机”补充一个具体例子。"
+        if is_intro else "按“直接结论→个人行动→结果或验证方式”重述本题，尽量给出具体事实。"
+    )
+    return AnswerFeedbackResult(
+        practice_score=score,
+        problem_analysis=analysis,
+        evidence_quote=quote,
+        improvement_suggestion=suggestion,
         learning_topic=topic,
+        basis="rule",
     )
 
 
 async def evaluate_answer(
     *, question_text: str, answer_text: str, is_followup: bool
-) -> AnswerFeedbackLlmResponse:
+) -> AnswerFeedbackResult:
     """Return an ephemeral practice assessment; it is never written to reports."""
     try:
         result = await chat_json(
@@ -71,12 +110,12 @@ async def evaluate_answer(
             AnswerFeedbackLlmResponse,
         )
     except Exception:
-        return _fallback(is_followup)
+        return _fallback(question_text, answer_text, is_followup)
 
     quote = result.evidence_quote
     reliable_quote = bool(
         quote and 1 <= len(quote) <= 25 and quote in answer_text
     )
     if result.practice_score is None or not reliable_quote:
-        return _fallback(is_followup)
-    return result
+        return _fallback(question_text, answer_text, is_followup)
+    return AnswerFeedbackResult(**result.model_dump(), basis="ai")

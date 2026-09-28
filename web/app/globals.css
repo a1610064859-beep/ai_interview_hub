@@ -547,6 +547,24 @@ html[data-theme="day"] .cabin-panel {
   backdrop-filter: blur(16px);
 }
 
+html[data-theme="day"] .answer-feedback-panel .feedback-question,
+html[data-theme="day"] .answer-feedback-panel .feedback-detail p {
+  color: #30354b !important;
+}
+
+html[data-theme="day"] .answer-feedback-panel .feedback-detail h2 {
+  color: #4e57b4 !important;
+}
+
+html[data-theme="day"] .answer-feedback-panel .feedback-kicker {
+  color: #4e57b4 !important;
+}
+
+html[data-theme="day"] .answer-feedback-panel .feedback-learning,
+html[data-theme="day"] .answer-feedback-panel .feedback-learning span {
+  color: #92420c !important;
+}
+
 html[data-theme="day"] .site-shell button {
   border-color: rgba(255, 255, 255, 0.58);
   background-image: linear-gradient(105deg, #6255ed 0%, #8b58ed 56%, #c45add 100%);

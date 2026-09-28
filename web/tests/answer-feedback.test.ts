@@ -18,6 +18,7 @@ const validFeedback = {
     evidence_quote: "我会多跑几次不同路况",
     improvement_suggestion: "补充测试矩阵、失败日志和复现步骤。",
     learning_topic: "star",
+    basis: "ai",
   },
 };
 
@@ -38,6 +39,7 @@ describe("answer feedback", () => {
           evidenceQuote: "我会多跑几次不同路况",
           improvementSuggestion: "补充测试矩阵、失败日志和复现步骤。",
           learningTopic: "star",
+          basis: "ai",
         },
       },
     });
