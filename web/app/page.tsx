@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { AnswerFeedbackPanel } from "../components/answer-feedback";
+import { LearnContent } from "./learn/learn-content";
 import {
   requestAnswerFeedback,
   type AnswerFeedback,
 } from "../lib/answer-feedback";
+import type { LearningTopic } from "../lib/learning";
 import {
   VoiceRecorder,
   type VoiceRecording,
@@ -145,6 +147,8 @@ export default function HomePage() {
   const submitLock = useRef(false);
   const [answerLog, setAnswerLog] = useState<AnswerLogEntry[]>([]);
   const [answerFeedback, setAnswerFeedback] = useState<AnswerFeedbackView | null>(null);
+  const [learningTopic, setLearningTopic] = useState<LearningTopic | "menu" | null>(null);
+  const interviewScrollRef = useRef(0);
   const answerFeedbackAbortRef = useRef<AbortController | null>(null);
   const feedbackContinuationRef = useRef<FeedbackContinuation | null>(null);
 
@@ -167,6 +171,20 @@ export default function HomePage() {
 
   function buildInterviewReportHref(sid: number): string {
     return resolveReportHref(sid, interviewIdentityRef.current);
+  }
+
+  function openLearning(topic: LearningTopic | "menu" = "menu") {
+    if (voicePhase !== "idle") {
+      setNotice("请先结束当前录音，再打开学习菜单。");
+      return;
+    }
+    interviewScrollRef.current = window.scrollY;
+    setLearningTopic(topic);
+  }
+
+  function returnFromLearning() {
+    setLearningTopic(null);
+    requestAnimationFrame(() => window.scrollTo(0, interviewScrollRef.current));
   }
 
   useEffect(() => {
@@ -936,6 +954,10 @@ export default function HomePage() {
     }
   }, [view]);
 
+  if (learningTopic !== null) {
+    return <LearnContent onReturn={returnFromLearning} initialTopic={learningTopic === "menu" ? undefined : learningTopic} />;
+  }
+
   return (
     <main className="site-shell mx-auto w-full max-w-6xl px-3 py-4 sm:px-6 sm:py-8 xl:px-8 xl:py-10">
       <header className="site-header mb-6 min-w-0 max-w-full sm:mb-10">
@@ -950,8 +972,7 @@ export default function HomePage() {
           <div className="flex flex-wrap gap-2">
             <Link
               href="/learn"
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={(event) => { event.preventDefault(); openLearning(); }}
               className="rounded-full border border-[#ff8a2a] px-4 py-2 text-sm text-[#ffb067]"
             >
               面试学习菜单
@@ -1079,6 +1100,7 @@ export default function HomePage() {
                   : "继续面试"
             }
             onContinue={() => continueAfterAnswerFeedback(view.sid)}
+            onLearn={openLearning}
           />
         ) : (
           <InterviewPanel

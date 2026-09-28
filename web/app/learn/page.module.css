@@ -4,8 +4,8 @@
 .header h1{font-size:clamp(31px,4vw,48px);line-height:1.15;letter-spacing:-.03em;margin:12px 0}
 .lead{color:var(--app-muted);font-size:16px;line-height:1.75;max-width:760px}
 .headerActions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;min-width:220px}
-.headerActions a,.footer a{display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:10px 16px;border:1px solid var(--app-border);border-radius:99px;color:var(--app-accent);font-weight:650;text-decoration:none;background:var(--app-surface-solid)}
-.headerActions a:hover,.footer a:hover{border-color:var(--app-accent)}
+.headerActions a,.headerActions button,.footer a,.footer button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:10px 16px;border:1px solid var(--app-border);border-radius:99px;color:var(--app-accent);font:inherit;font-weight:650;text-decoration:none;background:var(--app-surface-solid);cursor:pointer}
+.headerActions a:hover,.headerActions button:hover,.footer a:hover,.footer button:hover{border-color:var(--app-accent)}
 .menu{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:22px 0}
 .menuHeading{font-size:14px;font-weight:800;color:var(--app-accent);margin:24px 0 -12px;letter-spacing:.08em}
 .menu a{display:flex;align-items:center;gap:12px;padding:17px;border:1px solid var(--app-border);border-radius:16px;background:var(--app-surface);color:var(--app-text);font-weight:650;text-decoration:none;line-height:1.4}

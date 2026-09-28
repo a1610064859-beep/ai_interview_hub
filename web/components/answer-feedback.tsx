@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   buildAnswerFeedbackLearningHref,
   type AnswerFeedback,
+  type LearningTopic,
 } from "../lib/answer-feedback";
 
 export function AnswerFeedbackPanel({
@@ -14,6 +15,7 @@ export function AnswerFeedbackPanel({
   error,
   continueLabel,
   onContinue,
+  onLearn,
 }: {
   feedback: AnswerFeedback | null;
   questionText: string;
@@ -23,6 +25,7 @@ export function AnswerFeedbackPanel({
   error: string | null;
   continueLabel: string;
   onContinue: () => void;
+  onLearn: (topic: LearningTopic) => void;
 }) {
   return (
     <section
@@ -85,8 +88,10 @@ export function AnswerFeedbackPanel({
 
           <Link
             href={buildAnswerFeedbackLearningHref(feedback.feedback.learningTopic)}
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={(event) => {
+              event.preventDefault();
+              onLearn(feedback.feedback.learningTopic);
+            }}
             className="feedback-learning flex items-center justify-between gap-4 rounded-2xl border border-[#ff9a50]/50 bg-[#2b1d14]/70 px-5 py-4 text-[#ffd1ab] transition hover:border-[#ffb56c] hover:bg-[#3a261a]"
           >
             <span>
