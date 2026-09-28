@@ -143,6 +143,7 @@ export default function HomePage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [answerText, setAnswerText] = useState("");
   const [answerHint, setAnswerHint] = useState<string | null>(null);
+  const [answerInputMode, setAnswerInputMode] = useState<AnswerLogEntry["kind"] | null>(null);
   const createLock = useRef(false);
   const submitLock = useRef(false);
   const [answerLog, setAnswerLog] = useState<AnswerLogEntry[]>([]);
@@ -298,6 +299,7 @@ export default function HomePage() {
     cancelAnswerFeedbackRequest();
     setAnswerText("");
     setAnswerHint(null);
+    setAnswerInputMode(null);
     setAnswerLog([]);
     setVoicePhase("idle");
     setVoiceMeta(null);
@@ -535,6 +537,24 @@ export default function HomePage() {
     setBusy(false);
     setHold(false);
     setConfirmHref(null);
+    if (outcome.code === "INPUT_MODE_MISMATCH") {
+      const lockedMode = channel === "voice" ? "text" : "voice";
+      setAnswerInputMode(lockedMode);
+      setNotice(
+        formatApiError(
+          {
+            status: outcome.status,
+            code: outcome.code,
+            serverMessage: outcome.serverMessage,
+          },
+          channel === "voice" ? "语音提交失败" : "提交失败",
+          channel === "voice"
+            ? "此会话已锁定为文本模式。本次录音未能提交，请改用文本输入，或重新开始一场语音面试。未自动重试。"
+            : "此会话已锁定为语音模式。当前文本已保留，请继续使用语音输入，或重新开始一场文本面试。未自动重试。",
+        ),
+      );
+      return "stopped";
+    }
     setNotice(
       formatApiError(
         {
@@ -728,6 +748,10 @@ export default function HomePage() {
   }
 
   async function startRecording() {
+    if (answerInputMode === "text") {
+      setNotice("本场已锁定为文本模式。若要语音作答，请重新开始一场面试。");
+      return;
+    }
     if (
       view.phase !== "interview" ||
       view.mode !== "real" ||
@@ -813,6 +837,7 @@ export default function HomePage() {
         isFollowup: view.isFollowup,
       },
     ]);
+    setAnswerInputMode((current) => current ?? "voice");
 
     if (view.audienceMode === "新生") {
       await showAnswerFeedback(view, value);
@@ -860,6 +885,10 @@ export default function HomePage() {
       setAnswerHint(`回答过长（去除首尾空白后最多 ${MAX_ANSWER_LEN} 字符）。`);
       return;
     }
+    if (answerInputMode === "voice") {
+      setNotice("本场已锁定为语音模式。当前文本已保留；如需文本面试，请重新开始一场面试。");
+      return;
+    }
 
     submitLock.current = true;
     setBusy(true);
@@ -905,6 +934,7 @@ export default function HomePage() {
         isFollowup: wasFollowup,
       },
     ]);
+    setAnswerInputMode((current) => current ?? "text");
 
     if (view.audienceMode === "新生") {
       setAnswerText("");
@@ -1121,6 +1151,7 @@ export default function HomePage() {
             elapsed={elapsed}
             voiceMeta={voiceMeta}
             answerLog={answerLog}
+            answerInputMode={answerInputMode}
             onAnswerChange={(value) => {
               setAnswerText(value);
               setAnswerHint(null);
@@ -1358,6 +1389,7 @@ function InterviewPanel({
   elapsed,
   voiceMeta,
   answerLog,
+  answerInputMode,
   onAnswerChange,
   onSubmit,
   onStartRecording,
@@ -1380,6 +1412,7 @@ function InterviewPanel({
   elapsed: number;
   voiceMeta: string | null;
   answerLog: AnswerLogEntry[];
+  answerInputMode: AnswerLogEntry["kind"] | null;
   onAnswerChange: (value: string) => void;
   onSubmit: () => void;
   onStartRecording: () => void;
@@ -1468,6 +1501,11 @@ function InterviewPanel({
 
           {mode === "real" ? (
             <div className="mt-4 rounded-2xl border border-[#1d4ed8]/60 bg-[#070b14] p-3">
+              <p className="mb-3 text-xs text-[#9fb4d4]" role="status">
+                {answerInputMode === null
+                  ? "本场首次成功提交后将固定使用文本或语音输入。"
+                  : `本场已锁定为${answerInputMode === "voice" ? "语音" : "文本"}模式。`}
+              </p>
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                 <span className="text-sm text-[#9fb4d4]">
                   语音回答（webm/opus，随录音提交时长与停顿统计）
@@ -1499,7 +1537,7 @@ function InterviewPanel({
                 <button
                   type="button"
                   className="max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={busy || hold || voicePhase !== "idle"}
+                  disabled={busy || hold || voicePhase !== "idle" || answerInputMode === "text"}
                   onClick={onStartRecording}
                 >
                   开始录音
@@ -1556,10 +1594,14 @@ function InterviewPanel({
           <button
             type="button"
             className="mt-4 max-w-full rounded-full border border-[#ff8a2a] bg-[#ff8a2a] px-4 py-2 text-sm font-medium text-[#1a0d04] disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={busy || hold || voicePhase !== "idle"}
+            disabled={busy || hold || voicePhase !== "idle" || answerInputMode === "voice"}
             onClick={onSubmit}
           >
-            {busy ? "正在提交…" : "提交文本回答"}
+            {busy
+              ? "正在提交…"
+              : answerInputMode === "voice"
+                ? "本场已锁定语音模式"
+                : "提交文本回答"}
           </button>
 
           <div className="mt-6 border-t border-[#1d2c4e] pt-4">
