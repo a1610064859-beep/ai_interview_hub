@@ -78,6 +78,17 @@ export default function LearnPage() {
       <div className={styles.lessonList}>
         {allLessons.map((lesson, i) => <section id={lesson.id} key={lesson.id} className={styles.lesson} aria-labelledby={`${lesson.id}-title`}>
           <div className={styles.lessonHeading}><span className={styles.number}>{String(i + 1).padStart(2, "0")}</span><div><h2 id={`${lesson.id}-title`}>{lesson.title}</h2><p>{lesson.summary}</p></div></div>
+          {lesson.id === "star" && <div className={styles.starExplainer}>
+            <p><strong>STAR 是什么？</strong>它是回答“请讲一次你如何处理问题”这类经历题的四步叙述方法。四个字母分别是 Situation（情境）、Task（任务）、Action（行动）、Result（结果）。按这个顺序说，面试官能听清发生了什么、你做了什么、最后怎样。</p>
+            <p className={styles.starQuestion}>例题：请讲一次你和同学协作完成任务的经历。</p>
+            <div className={styles.starGrid}>{starParts.map((part) => <div key={part.key} className={styles.starCard}>
+              <span className={styles.starLetter}>{part.letter}</span>
+              <strong>{part.english} · {part.title}</strong>
+              <p>{part.prompt}</p>
+              <p className={styles.starExample}>{part.example}</p>
+            </div>)}</div>
+            <p className={styles.starNote}>记住：情境和任务简短交代，行动重点讲<strong>你本人具体做了什么</strong>，结果只讲真实发生的事。知识题、比较题先直接回答，不必套用 STAR。</p>
+          </div>}
           <div className={styles.lessonColumns}>
             <div><h3>容易答偏的地方</h3><p>{lesson.mistake}</p><h3>你可以这样说</h3><p>{lesson.example}</p></div>
             <div><h3>做法</h3><ol>{lesson.method.map((m) => <li key={m}>{m}</li>)}</ol><div className={styles.practiceTip}><strong>30 秒小练习</strong><p>{lesson.practice}</p></div></div>

@@ -2,11 +2,11 @@ export type StarPart = "situation" | "task" | "action" | "result";
 export type StarDraft = Record<StarPart, string>;
 export type LearningTopic = "hear" | "star" | "intro" | "followup" | "unknown" | "review";
 
-export const starParts: { key: StarPart; letter: string; title: string; prompt: string }[] = [
-  { key: "situation", letter: "S", title: "情境", prompt: "这件事发生在什么场景？你当时是什么角色？" },
-  { key: "task", letter: "T", title: "任务", prompt: "要解决什么问题，或者要完成什么目标？" },
-  { key: "action", letter: "A", title: "行动", prompt: "你本人具体做了哪几步？团队工作请分清自己的贡献。" },
-  { key: "result", letter: "R", title: "结果", prompt: "实际发生了什么？如果没有成果数字，可以说反馈和复盘。" },
+export const starParts: { key: StarPart; letter: string; english: string; title: string; prompt: string; example: string }[] = [
+  { key: "situation", letter: "S", english: "Situation", title: "情境", prompt: "这件事发生在什么场景？你当时是什么角色？", example: "课程展示前，组员提交的资料版本不一致。" },
+  { key: "task", letter: "T", english: "Task", title: "任务", prompt: "要解决什么问题，或者要完成什么目标？", example: "我负责在截止前整理并核对最终版。" },
+  { key: "action", letter: "A", english: "Action", title: "行动", prompt: "你本人具体做了哪几步？团队工作请分清自己的贡献。", example: "我建立清单，逐一确认文件来源和负责人，统一命名后复核。" },
+  { key: "result", letter: "R", english: "Result", title: "结果", prompt: "实际发生了什么？如果没有成果数字，可以说反馈和复盘。", example: "小组按时完成展示；复盘后决定提前约定资料格式。" },
 ];
 
 export function reviewStarDraft(draft: StarDraft): StarPart[] {

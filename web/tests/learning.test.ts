@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildStarDraft, reviewStarDraft, questionExercises, interviewKnowledge } from "../lib/learning.ts";
+import { buildStarDraft, reviewStarDraft, questionExercises, interviewKnowledge, starParts } from "../lib/learning.ts";
+
+test("STAR 入门说明包含四个英文全称和可连成一段的示例", () => {
+  assert.deepEqual(starParts.map((part) => part.english), ["Situation", "Task", "Action", "Result"]);
+  assert.ok(starParts.every((part) => part.prompt.trim() && part.example.trim()));
+});
 
 test("真实经历四段可拼成回答；填写完整不等于回答质量获评分", () => {
   const draft = { situation: "课程展示前资料分散。", task: "我负责汇总。", action: "我建清单并逐项核对来源。", result: "按时提交，也发现应更早约定格式。" };
