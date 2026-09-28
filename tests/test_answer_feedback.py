@@ -115,7 +115,7 @@ def test_feedback_scores_latest_answer_without_advancing_session(monkeypatch):
         "feedback": {
             "practice_score": 82,
             "problem_analysis": "结论和验证方法明确，可以补充测试前后的对比依据。",
-            "evidence_quote": "连续三轮都没有丢包",
+            "evidence_quote": "我复跑同一组用例，确认连续三轮都没有丢包。",
             "improvement_suggestion": "按STAR顺序补充任务背景、个人行动和量化结果。",
             "learning_topic": "star",
             "basis": "ai",
@@ -153,6 +153,18 @@ def test_feedback_rejects_quote_not_present_in_answer(monkeypatch):
     assert feedback["basis"] == "rule"
     assert "结构" in feedback["problem_analysis"]
     assert feedback["improvement_suggestion"]
+
+
+def test_fragment_expands_to_complete_original_sentence_without_outer_quotes():
+    from server.services.answer_feedback import _complete_evidence_quote
+
+    answer = "“在实习期间，我确实深度参与过一起多传感器（相机+激光雷达+毫米波）标定偏差导致的融合异常定位，并且后续在HIL台架与Corner Case中做了闭环验证。"
+    fragment = "“在实习期间，我确实深度参与过一起多传感器（相机+"
+
+    quote = _complete_evidence_quote(answer, fragment)
+
+    assert quote == answer[1:]
+    assert quote in answer
 
 
 def test_feedback_degrades_safely_when_llm_fails(monkeypatch):

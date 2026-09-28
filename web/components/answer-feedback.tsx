@@ -78,7 +78,7 @@ export function AnswerFeedbackPanel({
           {feedback.feedback.evidenceQuote ? (
             <blockquote className="feedback-quote rounded-2xl border-l-4 border-[#ff9a50] bg-[#1e1b20] px-5 py-4">
               <h2 className="text-sm font-semibold text-[#ffc18d]">回答依据</h2>
-              <p className="mt-2 leading-7 text-white">“{feedback.feedback.evidenceQuote}”</p>
+              <p className="mt-2 whitespace-pre-wrap leading-7 text-white">{feedback.feedback.evidenceQuote}</p>
             </blockquote>
           ) : null}
           <FeedbackDetail title="改进建议" body={feedback.feedback.improvementSuggestion} />

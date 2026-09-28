@@ -21,6 +21,7 @@ class AnswerFeedbackLlmResponse(BaseModel):
 
 
 class AnswerFeedbackResult(AnswerFeedbackLlmResponse):
+    evidence_quote: str | None = Field(default=None, max_length=5000)
     basis: Literal["ai", "rule"]
 
 
@@ -40,6 +41,26 @@ JSON 必须且只能包含这 5 个字段：practice_score、problem_analysis、
 evidence_quote 必须是回答原文中连续且完全一致的 1-25 个字符，可以从 quote_candidate 截取；无法找到可靠原文依据时 practice_score 和 evidence_quote 都返回 null，并给出通用学习提示。
 learning_topic 只能使用 hear、star、intro、followup、unknown、review 之一：分别表示理解题意、STAR结构、自我介绍、追问应答、暂无法分类、复盘。
 对文本转写不可推断语速、停顿、口头表达流畅度。不要重复题目，不要编造回答中没有的经历或事实。"""
+
+
+def _complete_evidence_quote(answer_text: str, fragment: str | None) -> str | None:
+    """Expand a verified fragment to its containing original sentence."""
+    if not fragment:
+        return None
+    fragment = fragment.strip()
+    if not fragment:
+        return None
+    hit = answer_text.find(fragment)
+    if hit < 0:
+        return None
+
+    sentence_marks = "。！？\n"
+    start = max(answer_text.rfind(mark, 0, hit) for mark in sentence_marks) + 1
+    ends = [answer_text.find(mark, hit + len(fragment) - 1) for mark in sentence_marks]
+    ends = [position for position in ends if position >= 0]
+    end = min(ends) + 1 if ends else len(answer_text)
+    quote = answer_text[start:end].strip().strip('“”"‘’')
+    return quote if quote and quote in answer_text else fragment
 
 
 def _fallback(question_text: str, answer_text: str, is_followup: bool) -> AnswerFeedbackResult:
@@ -63,7 +84,7 @@ def _fallback(question_text: str, answer_text: str, is_followup: bool) -> Answer
     has_reason = bool(re.search(r"因为|因此|所以|希望|想从事|感兴趣", answer))
     score = min(75, 30 + 10 * (len(answer) >= 20) + 10 * (len(answer) >= 60)
                 + 10 * has_background + 10 * has_action + 10 * has_result + 5 * has_reason)
-    quote = re.split(r"[。！？\n]", answer, maxsplit=1)[0][:25] or answer[:25]
+    quote = _complete_evidence_quote(answer_text, answer[:25]) or answer[:25]
     missing = []
     if is_intro and not has_background:
         missing.append("专业或学习背景")
@@ -114,10 +135,12 @@ async def evaluate_answer(
     except Exception:
         return _fallback(question_text, answer_text, is_followup)
 
-    quote = result.evidence_quote
-    reliable_quote = bool(
-        quote and 1 <= len(quote) <= 25 and quote in answer_text
-    )
+    quote = _complete_evidence_quote(answer_text, result.evidence_quote)
+    reliable_quote = bool(quote and quote in answer_text)
     if result.practice_score is None or not reliable_quote:
         return _fallback(question_text, answer_text, is_followup)
-    return AnswerFeedbackResult(**result.model_dump(), basis="ai")
+    return AnswerFeedbackResult(
+        **result.model_dump(exclude={"evidence_quote"}),
+        evidence_quote=quote,
+        basis="ai",
+    )
