@@ -7,6 +7,7 @@
 .headerActions a,.footer a{display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:10px 16px;border:1px solid var(--app-border);border-radius:99px;color:var(--app-accent);font-weight:650;text-decoration:none;background:var(--app-surface-solid)}
 .headerActions a:hover,.footer a:hover{border-color:var(--app-accent)}
 .menu{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:22px 0}
+.menuHeading{font-size:14px;font-weight:800;color:var(--app-accent);margin:24px 0 -12px;letter-spacing:.08em}
 .menu a{display:flex;align-items:center;gap:12px;padding:17px;border:1px solid var(--app-border);border-radius:16px;background:var(--app-surface);color:var(--app-text);font-weight:650;text-decoration:none;line-height:1.4}
 .menu a:hover,.menu a:focus-visible{border-color:var(--app-accent);box-shadow:0 0 0 3px var(--app-accent-soft)}
 .menu span,.number{color:var(--app-accent);font-variant-numeric:tabular-nums;font-weight:800}
@@ -36,5 +37,6 @@
 .reviewActions{display:flex;gap:10px;margin-top:18px}.reviewActions button{min-height:44px;padding:10px 19px;border-radius:12px;background:var(--app-accent);color:var(--app-surface-solid);font-weight:750;cursor:pointer}.reviewActions .secondary{background:var(--app-surface-solid);color:var(--app-accent);border:1px solid var(--app-accent)}
 .preview{margin-top:18px;border:1px solid var(--app-border);border-radius:14px;padding:18px;background:var(--app-surface-solid)}.preview h4{margin:0 0 8px;font-size:16px;color:var(--app-accent)}.preview p{white-space:pre-wrap;margin:0;line-height:1.9}
 .footer{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-top:28px}.footer p{color:var(--app-muted);font-size:13px;line-height:1.6}
+.sources{display:flex;gap:14px;flex-wrap:wrap;align-items:center;color:var(--app-muted);font-size:13px}.sources a{color:var(--app-accent);text-decoration:underline;text-underline-offset:3px}
 @media(max-width:760px){.shell{padding:16px 12px 50px}.header{display:block;padding:22px}.headerActions{justify-content:flex-start;margin-top:18px}.menu{grid-template-columns:repeat(2,minmax(0,1fr))}.intro,.lesson,.workshop{padding:20px}.introGrid,.lessonColumns,.draftGrid{grid-template-columns:1fr}.footer{display:block}.footer p{margin-top:12px}}
 @media(max-width:480px){.menu{grid-template-columns:1fr}.lessonHeading{gap:10px}.stepTitle h3{font-size:19px}}

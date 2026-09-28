@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import {
   buildStarDraft,
+  interviewKnowledge,
   learningLessons,
   questionExercises,
   reviewStarDraft,
@@ -14,6 +15,7 @@ import {
 import styles from "./page.module.css";
 
 const emptyDraft: StarDraft = { situation: "", task: "", action: "", result: "" };
+const allLessons = [...learningLessons, ...interviewKnowledge];
 
 const diagnose = {
   question: "面试官问：请讲一次你在小组项目中解决困难的经历。",
@@ -56,8 +58,13 @@ export default function LearnPage() {
         </div>
       </header>
 
-      <nav aria-label="学习菜单" className={styles.menu}>
+      <p className={styles.menuHeading}>回答基础</p>
+      <nav aria-label="回答基础学习菜单" className={styles.menu}>
         {learningLessons.map((lesson, i) => <a key={lesson.id} href={`#${lesson.id}`}><span>{String(i + 1).padStart(2, "0")}</span>{lesson.title}</a>)}
+      </nav>
+      <p className={styles.menuHeading}>更多面试知识</p>
+      <nav aria-label="更多面试知识菜单" className={styles.menu}>
+        {interviewKnowledge.map((lesson, i) => <a key={lesson.id} href={`#${lesson.id}`}><span>{String(i + 7).padStart(2, "0")}</span>{lesson.title}</a>)}
       </nav>
 
       <section className={styles.intro}>
@@ -69,7 +76,7 @@ export default function LearnPage() {
       </section>
 
       <div className={styles.lessonList}>
-        {learningLessons.map((lesson, i) => <section id={lesson.id} key={lesson.id} className={styles.lesson} aria-labelledby={`${lesson.id}-title`}>
+        {allLessons.map((lesson, i) => <section id={lesson.id} key={lesson.id} className={styles.lesson} aria-labelledby={`${lesson.id}-title`}>
           <div className={styles.lessonHeading}><span className={styles.number}>{String(i + 1).padStart(2, "0")}</span><div><h2 id={`${lesson.id}-title`}>{lesson.title}</h2><p>{lesson.summary}</p></div></div>
           <div className={styles.lessonColumns}>
             <div><h3>容易答偏的地方</h3><p>{lesson.mistake}</p><h3>你可以这样说</h3><p>{lesson.example}</p></div>
@@ -131,6 +138,11 @@ export default function LearnPage() {
           {built && <div className={styles.preview}><h4>你的答案草稿</h4><p>{built}</p></div>}
         </div>
       </section>
+      <aside className={styles.sources} aria-label="延伸阅读">
+        <strong>延伸阅读</strong>
+        <a href="https://career.berkeley.edu/prepare-for-success/interviewing/" target="_blank" rel="noopener noreferrer">加州大学伯克利分校 · 面试准备</a>
+        <a href="https://careerservices.fas.harvard.edu/resources/interviewing/" target="_blank" rel="noopener noreferrer">哈佛大学职业中心 · 面试与提问</a>
+      </aside>
       <footer className={styles.footer}><Link href="/">带着这段回答去练习面试 →</Link><p>学习方法供训练使用；面试与最终报告以实际作答和系统评分为准。</p></footer>
     </main>
   );
