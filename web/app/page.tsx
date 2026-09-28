@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { AnswerFeedbackPanel } from "../components/answer-feedback";
+import {
+  requestAnswerFeedback,
+  type AnswerFeedback,
+} from "../lib/answer-feedback";
 import {
   VoiceRecorder,
   type VoiceRecording,
@@ -104,6 +109,30 @@ type ParseErr = { ok: false; message: string };
 
 type RealInterviewView = Extract<View, { phase: "interview"; mode: "real" }>;
 
+type AnswerFeedbackView =
+  | {
+      status: "loading";
+      sid: number;
+      questionText: string;
+      qSeq: number;
+      isFollowup: boolean;
+    }
+  | { status: "ready"; sid: number; value: AnswerFeedback }
+  | {
+      status: "failed";
+      sid: number;
+      questionText: string;
+      qSeq: number;
+      isFollowup: boolean;
+      message: string;
+    };
+
+type FeedbackContinuation = {
+  sid: number;
+  view: RealInterviewView;
+  answer: AnswerData;
+};
+
 export default function HomePage() {
   const router = useRouter();
   const [view, setView] = useState<View>(() => initialView());
@@ -115,6 +144,9 @@ export default function HomePage() {
   const createLock = useRef(false);
   const submitLock = useRef(false);
   const [answerLog, setAnswerLog] = useState<AnswerLogEntry[]>([]);
+  const [answerFeedback, setAnswerFeedback] = useState<AnswerFeedbackView | null>(null);
+  const answerFeedbackAbortRef = useRef<AbortController | null>(null);
+  const feedbackContinuationRef = useRef<FeedbackContinuation | null>(null);
 
   const recorderRef = useRef<VoiceRecorder | null>(null);
   const levelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -196,6 +228,8 @@ export default function HomePage() {
       stopLevelTimer();
       recoveryAbortRef.current?.abort();
       recoveryAbortRef.current = null;
+      answerFeedbackAbortRef.current?.abort();
+      answerFeedbackAbortRef.current = null;
       recorderRef.current?.dispose();
       recorderRef.current = null;
     };
@@ -243,6 +277,7 @@ export default function HomePage() {
   function resetSessionState() {
     recoveryAbortRef.current?.abort();
     recoveryAbortRef.current = null;
+    cancelAnswerFeedbackRequest();
     setAnswerText("");
     setAnswerHint(null);
     setAnswerLog([]);
@@ -257,6 +292,105 @@ export default function HomePage() {
     voiceSubmitLockRef.current = false;
     submitLock.current = false;
     // 注意：resetSessionState 绝不得修改 createLock！只能在失败路径释放（AGENTS 审查项 1）
+  }
+
+  function cancelAnswerFeedbackRequest() {
+    answerFeedbackAbortRef.current?.abort();
+    answerFeedbackAbortRef.current = null;
+    feedbackContinuationRef.current = null;
+    setAnswerFeedback(null);
+  }
+
+  async function showAnswerFeedback(
+    currentView: RealInterviewView,
+    answer: AnswerData,
+  ) {
+    cancelAnswerFeedbackRequest();
+    const controller = new AbortController();
+    answerFeedbackAbortRef.current = controller;
+    feedbackContinuationRef.current = {
+      sid: currentView.sid,
+      view: currentView,
+      answer,
+    };
+    setAnswerFeedback({
+      status: "loading",
+      sid: currentView.sid,
+      questionText: currentView.question.text,
+      qSeq: currentView.question.seq,
+      isFollowup: currentView.isFollowup,
+    });
+    setBusy(true);
+
+    const result = await requestAnswerFeedback(currentView.sid, controller.signal);
+    if (answerFeedbackAbortRef.current !== controller || controller.signal.aborted) {
+      return;
+    }
+    if (
+      result.kind === "ok" &&
+      result.value.qSeq === currentView.question.seq &&
+      result.value.isFollowup === currentView.isFollowup
+    ) {
+      setAnswerFeedback({ status: "ready", sid: currentView.sid, value: result.value });
+    } else {
+      const message = result.kind === "ok"
+        ? "反馈与本次回答不匹配，可以继续面试。"
+        : result.kind === "aborted"
+          ? "本题反馈请求已取消，可以继续面试。"
+          : result.message;
+      setAnswerFeedback({
+        status: "failed",
+        sid: currentView.sid,
+        questionText: currentView.question.text,
+        qSeq: currentView.question.seq,
+        isFollowup: currentView.isFollowup,
+        message,
+      });
+    }
+    setBusy(false);
+  }
+
+  function continueAfterAnswerFeedback(sid: number) {
+    const feedback = answerFeedback;
+    const pending = feedbackContinuationRef.current;
+    if (
+      !feedback ||
+      feedback.sid !== sid ||
+      !pending ||
+      pending.sid !== sid ||
+      view.phase !== "interview" ||
+      view.mode !== "real" ||
+      view.sid !== sid
+    ) {
+      return;
+    }
+
+    answerFeedbackAbortRef.current?.abort();
+    answerFeedbackAbortRef.current = null;
+    feedbackContinuationRef.current = null;
+    setAnswerFeedback(null);
+    setAnswerText("");
+    setAnswerHint(null);
+    setNotice(null);
+    setConfirmHref(null);
+    if (pending.answer.type === "done") {
+      submitLock.current = false;
+      voiceSubmitLockRef.current = false;
+      setBusy(false);
+      router.push(buildInterviewReportHref(sid));
+      return;
+    }
+
+    setView({
+      ...pending.view,
+      question: pending.answer.question,
+      isFollowup: pending.answer.type === "followup",
+      transitionAudioUrl: pending.answer.transitionAudioUrl,
+    });
+    setVoiceMeta(null);
+    submitLock.current = false;
+    voiceSubmitLockRef.current = false;
+    setBusy(false);
   }
 
   async function applyResolveOutcome(
@@ -473,6 +607,7 @@ export default function HomePage() {
   }
 
   async function enterInterview(mode: ApiMode, job: Job) {
+    cancelAnswerFeedbackRequest();
     // 1.5s 座舱过场（AGENTS §9）；real 模式同时并行创建会话
     const realUserId =
       view.phase === "device_check" ? view.userId : currentStudentId;
@@ -661,6 +796,11 @@ export default function HomePage() {
       },
     ]);
 
+    if (view.audienceMode === "新生") {
+      await showAnswerFeedback(view, value);
+      return;
+    }
+
     if (value.type === "done") {
       voiceSubmitLockRef.current = false;
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
@@ -748,6 +888,12 @@ export default function HomePage() {
       },
     ]);
 
+    if (view.audienceMode === "新生") {
+      setAnswerText("");
+      await showAnswerFeedback(view, value);
+      return;
+    }
+
     if (value.type === "done") {
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
       router.push(buildInterviewReportHref(view.sid));
@@ -802,6 +948,14 @@ export default function HomePage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Link
+              href="/learn"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-full border border-[#ff8a2a] px-4 py-2 text-sm text-[#ffb067]"
+            >
+              面试学习菜单
+            </Link>
             <Link
               href="/counsel"
               className="rounded-full border border-[#7eb6ff] px-4 py-2 text-sm text-[#7eb6ff]"
@@ -895,38 +1049,71 @@ export default function HomePage() {
       ) : null}
 
       {view.phase === "interview" ? (
-        <InterviewPanel
-          mode={view.mode}
-          job={view.job}
-          question={view.question}
-          isFollowup={view.isFollowup}
-          sid={view.mode === "real" ? view.sid : null}
-          startedAtMs={view.mode === "real" ? view.startedAtMs : null}
-          answerText={answerText}
-          answerHint={answerHint}
-          notice={notice}
-          confirmHref={confirmHref}
-          busy={busy}
-          hold={hold}
-          voicePhase={voicePhase}
-          level={level}
-          elapsed={elapsed}
-          voiceMeta={voiceMeta}
-          answerLog={answerLog}
-          onAnswerChange={(value) => {
-            setAnswerText(value);
-            setAnswerHint(null);
-          }}
-          onSubmit={() => {
-            void submitAnswer();
-          }}
-          onStartRecording={() => {
-            void startRecording();
-          }}
-          onStopSendRecording={() => {
-            void stopRecordingAndSend();
-          }}
-        />
+        view.mode === "real" && answerFeedback?.sid === view.sid ? (
+          <AnswerFeedbackPanel
+            feedback={answerFeedback.status === "ready" ? answerFeedback.value : null}
+            questionText={
+              answerFeedback.status === "ready"
+                ? answerFeedback.value.questionText
+                : answerFeedback.questionText
+            }
+            qSeq={
+              answerFeedback.status === "ready"
+                ? answerFeedback.value.qSeq
+                : answerFeedback.qSeq
+            }
+            isFollowup={
+              answerFeedback.status === "ready"
+                ? answerFeedback.value.isFollowup
+                : answerFeedback.isFollowup
+            }
+            loading={answerFeedback.status === "loading"}
+            error={answerFeedback.status === "failed" ? answerFeedback.message : null}
+            continueLabel={
+              answerFeedback.status === "loading"
+                ? feedbackContinuationRef.current?.answer.type === "done"
+                  ? "跳过等待，查看整场报告"
+                  : "跳过等待，继续面试"
+                : feedbackContinuationRef.current?.answer.type === "done"
+                  ? "查看整场报告"
+                  : "继续面试"
+            }
+            onContinue={() => continueAfterAnswerFeedback(view.sid)}
+          />
+        ) : (
+          <InterviewPanel
+            mode={view.mode}
+            job={view.job}
+            question={view.question}
+            isFollowup={view.isFollowup}
+            sid={view.mode === "real" ? view.sid : null}
+            startedAtMs={view.mode === "real" ? view.startedAtMs : null}
+            answerText={answerText}
+            answerHint={answerHint}
+            notice={notice}
+            confirmHref={confirmHref}
+            busy={busy}
+            hold={hold}
+            voicePhase={voicePhase}
+            level={level}
+            elapsed={elapsed}
+            voiceMeta={voiceMeta}
+            answerLog={answerLog}
+            onAnswerChange={(value) => {
+              setAnswerText(value);
+              setAnswerHint(null);
+            }}
+            onSubmit={() => {
+              void submitAnswer();
+            }}
+            onStartRecording={() => {
+              void startRecording();
+            }}
+            onStopSendRecording={() => {
+              void stopRecordingAndSend();
+            }}
+          />
+        )
       ) : null}
 
       {view.phase === "mock_done" ? (

@@ -313,6 +313,7 @@ function ReportView({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link href="/learn#review" className="rounded-full border border-[#ff8a2a]/60 bg-[#2a1608]/70 px-4 py-2 text-sm text-[#ffb067]">按报告建议学习</Link>
           <Link
             href="/"
             className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-4 py-2 text-sm text-cyan-100"

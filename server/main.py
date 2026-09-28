@@ -12,6 +12,7 @@ from server.api.growth import router as growth_router
 from server.api.recruiter import router as recruiter_router
 from server.api.student_roster import router as student_roster_router
 from server.api.counsel import router as counsel_router
+from server.api.answer_feedback import router as answer_feedback_router
 from server.config import settings
 from server.db import init_db
 from server.services import asr
@@ -41,6 +42,7 @@ app.include_router(growth_router)
 app.include_router(recruiter_router)
 app.include_router(student_roster_router)
 app.include_router(counsel_router)
+app.include_router(answer_feedback_router)
 
 
 @app.get("/api/asr/status")

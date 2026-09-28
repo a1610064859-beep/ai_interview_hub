@@ -61,6 +61,7 @@ export default function CounselPage() {
     <a href="/" className="text-sm text-[#7eb6ff]">← 返回面试仓</a>
     <h1 className="mt-4 text-2xl font-semibold sm:text-3xl">新生 · 智能汽车岗位路径</h1>
     <p className="mt-2 text-[#9fb4d4]">专业和年级取自当前登录账号；补充兴趣可让岗位建议更贴合。</p>
+    <a href="/learn" className="mt-4 inline-flex min-h-11 items-center rounded-full border border-[#ff8a2a] px-4 py-2 text-sm text-[#ffb067]">先学会听题与回答 · 面试学习菜单</a>
     <section className="mt-6 grid min-w-0 gap-4 rounded-3xl border border-[#2f6fed] bg-[#0c1730]/90 p-4 sm:p-6 md:grid-cols-2">
       <div className="text-sm text-[#9fb4d4]">专业 / 年级（来自当前账号）<div className="mt-2 rounded-xl border border-white/10 p-3 text-white">{student?.major ?? "未填写"} · {student?.grade ?? "未填写"}</div></div>
       <label className="text-sm text-[#9fb4d4] md:col-span-2">兴趣（逗号分隔，可留空）<input className="mt-2 w-full rounded-xl bg-[#050912] p-3 text-white" value={interests} onChange={(e) => setInterests(e.target.value)} /></label>
