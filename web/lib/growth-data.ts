@@ -445,6 +445,21 @@ export function comparisonReasonLabel(code: string): string {
   return COMPARISON_REASON_LABELS[code] ?? code;
 }
 
+export function growthComparisonEmptyMessage(reasons: readonly string[], sessionsCount: number): string {
+  if (reasons.some((reason) =>
+    ["SCORING_VERSION_UNKNOWN", "SCORING_VERSION_MISMATCH"].includes(reason)
+  )) {
+    return "两次评分版本不同或未标识，暂不计算维度变化。";
+  }
+  if (reasons.includes("INPUT_MODE_UNKNOWN")) {
+    return "旧记录缺少输入方式标识，暂不计算维度变化。";
+  }
+  if (sessionsCount < 2) {
+    return "完成两次同岗位训练后，这里会显示共同维度的变化。";
+  }
+  return "两次训练暂无共同有效维度。";
+}
+
 export function buildGrowthHref(userId: number, jobId?: number | null): string {
   if (!isPositiveInteger(userId)) {
     throw new Error("user_id must be a positive integer");
@@ -604,7 +619,7 @@ function parseCohortKey(key: string): {
 
 /**
  * 折线图：null 保持为 null（不补 0）；connectNulls 恒为 false。
- * 多 cohort 时总体分按输入模式和评分版本拆分；有效维度可在同一已知评分版本内跨输入模式连线。
+ * 多 cohort 时总体分按输入模式和评分版本拆分；非声学有效维度可在同一已知评分版本内跨输入模式连线。
  * 缺失维度及未知/不同评分版本始终断线。
  * 单 cohort 时保持一条综合分 + 四维折线。
  */
@@ -698,6 +713,7 @@ export function transformTrendToLineOptions(
       ? first.scoringVersion
       : cohortDisplayLabel(first.inputMode, first.scoringVersion);
     for (const dim of REQUIRED_DIMENSIONS) {
+      if (modes.size > 1 && dim === "expression_fluency") continue;
       const dimName = `${label} ${DIMENSION_LABEL_MAP[dim]}`;
       legendData.push(dimName);
       series.push({

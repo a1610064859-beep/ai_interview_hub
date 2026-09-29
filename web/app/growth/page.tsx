@@ -9,9 +9,8 @@ import { useAppTheme } from "../../components/theme-provider";
 import {
   buildGrowthHref,
   buildReportHref,
-  comparisonReasonLabel,
-  formatDeltaOrUnevaluated,
   formatScoreOrUnevaluated,
+  growthComparisonEmptyMessage,
   inputModeLabel,
   loadInterviewIdentity,
   parseGrowthHistoryResponse,
@@ -228,6 +227,21 @@ function GrowthPageInner() {
   }
 
   const recordCount = history?.records.length ?? 0;
+  const commonChanges = trend
+    ? REQUIRED_DIMENSIONS.filter((key) => key !== "expression_fluency")
+        .map((key) => trend.dimensionChanges[key])
+        .filter((change): change is NonNullable<typeof change> => change !== null)
+    : [];
+  const commonPrevious = commonChanges.length > 0
+    ? commonChanges.reduce((sum, change) => sum + change.previous, 0) / commonChanges.length
+    : null;
+  const commonCurrent = commonChanges.length > 0
+    ? commonChanges.reduce((sum, change) => sum + change.current, 0) / commonChanges.length
+    : null;
+  const comparisonBlockedByVersion = trend?.overallComparison.reasons.some((reason) =>
+    ["SCORING_VERSION_UNKNOWN", "SCORING_VERSION_MISMATCH"].includes(reason),
+  ) ?? false;
+  const comparisonBlockedByInputMode = trend?.overallComparison.reasons.includes("INPUT_MODE_UNKNOWN") ?? false;
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -293,39 +307,38 @@ function GrowthPageInner() {
             <p className="text-sm text-slate-400">仅一次训练，显示记录但不计算增减。</p>
           ) : null}
 
-          {trend.inputMode === "mixed" ? (
-            <p className="rounded-xl border border-orange-400/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-100">
-              文本与语音口径混合：总体分不直接比较；同版本、两次均有效的单项维度可连线比较。
-            </p>
-          ) : null}
-
           <div className="rounded-xl border border-cyan-400/20 bg-slate-950/60 p-4">
-            <p className="text-sm text-slate-400">最近两次可比变化</p>
-            <p className="mt-2 text-xl text-slate-50">
-              {formatDeltaOrUnevaluated(
-                trend.overallComparison.delta,
-                trend.overallComparison.comparable,
-              )}
-            </p>
-            {!trend.overallComparison.comparable ? (
-              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-orange-200">
-                {trend.overallComparison.reasons.map((code) => (
-                  <li key={code}>{comparisonReasonLabel(code)}</li>
-                ))}
-              </ul>
-            ) : null}
-            {trend.overallComparison.message ? (
-              <p className="mt-2 text-sm text-slate-400">{trend.overallComparison.message}</p>
-            ) : null}
+            <p className="text-sm text-slate-400">最近两次共同维度变化</p>
+            {commonPrevious !== null && commonCurrent !== null ? (
+              <>
+                <p className="mt-2 text-xl text-slate-50">
+                  {commonPrevious.toFixed(1)} → {commonCurrent.toFixed(1)}
+                  <span className="ml-2 text-cyan-200">
+                    （{commonCurrent - commonPrevious >= 0 ? "+" : ""}{(commonCurrent - commonPrevious).toFixed(1)}）
+                  </span>
+                </p>
+                <p className="mt-2 text-sm text-slate-400">
+                  按两次均有效的 {commonChanges.length} 项维度取均分，忽略表达流畅度；这是模型评分观测。
+                </p>
+              </>
+            ) : (
+              <p className="mt-2 text-sm text-slate-300">
+                {growthComparisonEmptyMessage(trend.overallComparison.reasons, trend.sessionsCount)}
+              </p>
+            )}
             <div className="mt-4 grid gap-2 md:grid-cols-2">
-              {REQUIRED_DIMENSIONS.map((key) => {
+              {REQUIRED_DIMENSIONS.filter((key) => key !== "expression_fluency").map((key) => {
                 const change = trend.dimensionChanges[key];
                 return (
                   <div key={key} className="rounded-lg border border-slate-700/80 px-3 py-2 text-sm">
                     <p className="text-slate-400">{DIMENSION_LABEL_MAP[key]}</p>
                     <p className="mt-1 text-slate-100">
                       {change === null
-                        ? "未评估"
+                        ? comparisonBlockedByVersion
+                          ? "评分版本不同，暂不计算变化"
+                          : comparisonBlockedByInputMode
+                            ? "输入方式未标识，暂不计算变化"
+                            : "未评估"
                         : `${formatScoreOrUnevaluated(change.previous)} → ${formatScoreOrUnevaluated(change.current)}（${change.delta >= 0 ? "+" : ""}${change.delta.toFixed(1)}）`}
                     </p>
                   </div>

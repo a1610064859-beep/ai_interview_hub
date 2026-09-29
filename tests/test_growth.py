@@ -355,8 +355,10 @@ def test_text_voice_incomparable_and_scoring_version_mismatch():
     assert t["input_mode"] == "mixed"
     assert "INPUT_MODE_MISMATCH" in t["overall_comparison"]["reasons"]
     assert t["overall_comparison"]["delta"] is None
-    # 单维：两次均有效仍可算
+    # 文本/语音混合时只比较同版本、两次均有效的非声学维度。
     assert t["dimension_changes"]["professional_match"]["delta"] == 2.0
+    assert t["dimension_changes"]["logic_structure"]["delta"] == 2.0
+    assert t["dimension_changes"]["job_competence"]["delta"] == 1.0
     assert t["dimension_changes"]["expression_fluency"] is None
 
     with SessionLocal() as db:
@@ -381,6 +383,7 @@ def test_text_voice_incomparable_and_scoring_version_mismatch():
     t2 = client.get("/api/growth/3/trend", params={"job_id": 1}).json()
     assert "SCORING_VERSION_MISMATCH" in t2["overall_comparison"]["reasons"]
     assert t2["overall_comparison"]["delta"] is None
+    assert all(t2["dimension_changes"][key] is None for key in DIM_KEYS)
 
 
 def test_legacy_null_scoring_version_unknown():

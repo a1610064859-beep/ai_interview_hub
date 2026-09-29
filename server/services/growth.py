@@ -252,7 +252,22 @@ def build_trend(db: DbSession, user_id: int, job_id: int) -> dict:
         prev_s, prev_r, _ = rows[-2]
         curr_s, curr_r, _ = rows[-1]
         comparison = _compare_overall(prev_s, prev_r, curr_s, curr_r)
-        dim_changes = _dimension_changes(prev_r, curr_r)
+        known_input_modes = (
+            prev_s.input_mode is not None
+            and curr_s.input_mode is not None
+        )
+        same_scoring_version = (
+            prev_r.scoring_version is not None
+            and prev_r.scoring_version == curr_r.scoring_version
+        )
+        dim_changes = (
+            _dimension_changes(prev_r, curr_r)
+            if known_input_modes and same_scoring_version
+            else {key: None for key in DIMENSION_KEYS}
+        )
+        # 声学流畅度不跨文本与语音口径比较；其余同版本有效维度仍可逐项观察。
+        if prev_s.input_mode != curr_s.input_mode:
+            dim_changes["expression_fluency"] = None
 
     return {
         "user_id": user_id,

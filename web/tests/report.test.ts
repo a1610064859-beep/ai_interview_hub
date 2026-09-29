@@ -22,6 +22,7 @@ import {
   cohortDisplayLabel,
   cohortIdentityKey,
   comparisonReasonLabel,
+  growthComparisonEmptyMessage,
   formatDeltaOrUnevaluated,
   formatScoreOrUnevaluated,
   getSeriesDataByName,
@@ -525,6 +526,18 @@ describe("growth-data null / connectNulls / incomparable", () => {
     assert.equal(dimMismatch.overallComparison.delta, null);
   });
 
+  it("旧记录未标识输入方式时说明缺少口径，避免误称没有共同维度", () => {
+    assert.equal(
+      growthComparisonEmptyMessage(["INPUT_MODE_UNKNOWN"], 2),
+      "旧记录缺少输入方式标识，暂不计算维度变化。",
+    );
+    assert.equal(
+      growthComparisonEmptyMessage(["SCORING_VERSION_UNKNOWN", "INPUT_MODE_UNKNOWN"], 2),
+      "两次评分版本不同或未标识，暂不计算维度变化。",
+    );
+    assert.equal(growthComparisonEmptyMessage([], 2), "两次训练暂无共同有效维度。");
+  });
+
   it("G-T06: 单次记录不计算增减；报告与再次训练入口链接", () => {
     const single = parseGrowthTrendResponse(
       trendPayload({
@@ -594,7 +607,7 @@ describe("growth-data report href + cohort 连线（Astra 定点）", () => {
     assert.equal(buildReportHref(11, 3, 1), "/reports/11?user_id=3&job_id=1");
   });
 
-  it("text/voice 的 overall 分开，同版本有效维度连线", () => {
+  it("text/voice 的 overall 分开，同版本非声学维度连线", () => {
     const trend = parseGrowthTrendResponse(
       trendPayload({
         input_mode: "mixed",
@@ -670,7 +683,7 @@ describe("growth-data report href + cohort 连线（Astra 定点）", () => {
     assert.deepEqual(getSeriesDataByName(opts, "文本·v1 综合分"), [70, null]);
     assert.deepEqual(getSeriesDataByName(opts, "语音·v1 综合分"), [null, 80]);
     assert.deepEqual(getSeriesDataByName(opts, "v1 专业匹配度"), [68, 75]);
-    assert.deepEqual(getSeriesDataByName(opts, "v1 表达流畅度"), [null, 82]);
+    assert.equal(getSeriesDataByName(opts, "v1 表达流畅度"), null);
     assert.equal(allSeriesConnectNullsFalse(opts), true);
   });
 
