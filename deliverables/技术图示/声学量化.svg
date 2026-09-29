@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="620" viewBox="0 0 1600 620">
+  <defs>
+    <style>
+      text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#F4F7FF}.h{font-size:32px;font-weight:700}.b{font-size:24px}.s{font-size:20px;fill:#BFCEE0}.mint{fill:#7CFFCB}.orange{fill:#FFAD66}
+      .card{fill:#081427;fill-opacity:.91;stroke:#58718A;stroke-width:2}
+    </style>
+  </defs>
+  <rect x="18" y="24" width="1000" height="530" rx="22" class="card"/>
+  <text x="62" y="78" class="h mint">语速部分得分：规则曲线</text>
+  <text x="62" y="111" class="s">仅展示语速扣分；停顿与填充词另计</text>
+  <rect x="447" y="155" width="164" height="299" fill="#7CFFCB" fill-opacity=".11"/>
+  <path d="M133 154V456H944" fill="none" stroke="#8CA2B7" stroke-width="3"/>
+  <path d="M133 154H944M133 305H944M133 456H944" stroke="#446079" stroke-width="2" stroke-dasharray="8 10"/>
+  <text x="62" y="164" class="s">100分</text><text x="70" y="315" class="s">80分</text><text x="70" y="466" class="s">60分</text>
+  <path d="M135 335L299 245L447 154H611L775 245L940 335" fill="none" stroke="#7CFFCB" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="447" cy="154" r="9" fill="#7CFFCB"/><circle cx="611" cy="154" r="9" fill="#7CFFCB"/>
+  <text x="124" y="492" class="s">100</text><text x="284" y="492" class="s">160</text><text x="430" y="492" class="s">220</text><text x="594" y="492" class="s">280</text><text x="758" y="492" class="s">340</text><text x="920" y="492" class="s">400</text>
+  <text x="387" y="531" class="b mint">项目规则区间 220–280 字/分</text>
+  <rect x="1040" y="24" width="542" height="530" rx="22" class="card"/>
+  <text x="1080" y="78" class="h mint">另外两项先按时长归一化</text>
+  <path d="M1106 147v55M1079 160l27-21 27 21M1079 180l27 21 27-21" fill="none" stroke="#FFAD66" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1160" y="161" class="b">持续静音停顿</text><text x="1160" y="201" class="s">−45 dB 且超过 1.5 秒计一次</text>
+  <text x="1080" y="252" class="b orange">≤ 6 次/分：不扣分</text>
+  <path d="M1078 293H1542" stroke="#446079" stroke-width="2"/>
+  <circle cx="1107" cy="354" r="32" fill="none" stroke="#7CFFCB" stroke-width="5"/><path d="M1094 354h26M1107 341v26" stroke="#7CFFCB" stroke-width="5" stroke-linecap="round"/>
+  <text x="1160" y="349" class="b">口头填充词</text><text x="1160" y="389" class="s">“嗯、那个、就是、然后、这个”</text>
+  <text x="1080" y="443" class="b orange">≤ 5 个/分：不扣分</text>
+  <text x="1080" y="510" class="s">缺少完整声学数据时显示“未评估”</text>
+  <text x="20" y="603" class="s">表达分 = max(0, 100 − 语速扣分 − 停顿扣分 − 填充词扣分)；规则阈值来自本项目代码。</text>
+</svg>

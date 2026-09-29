@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="620" viewBox="0 0 1600 620">
+  <defs>
+    <style>
+      text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#F4F7FF}
+      .h{font-size:34px;font-weight:700}.b{font-size:25px}.s{font-size:21px;fill:#BFCEE0}.mint{fill:#7CFFCB}.orange{fill:#FFAD66}
+      .card{fill:#081427;fill-opacity:.9;stroke:#58718A;stroke-width:2}.line{fill:none;stroke:#7CFFCB;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+    <marker id="arr" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto"><path d="M1 1 L11 6 L1 11" fill="none" stroke="#7CFFCB" stroke-width="2.5"/></marker>
+  </defs>
+  <rect x="16" y="25" width="425" height="535" rx="22" class="card"/>
+  <text x="55" y="88" class="h mint">两类种子岗位</text>
+  <path d="M74 145h104l27 34h120l26-34h36M84 179v27h293v-27M120 206a17 17 0 1 0 34 0m177 0a17 17 0 1 0 34 0" fill="none" stroke="#7CFFCB" stroke-width="6" stroke-linecap="round"/>
+  <text x="55" y="281" class="b">智驾测试</text><text x="55" y="319" class="s">HIL / CAN / 偶发缺陷</text>
+  <path d="M55 345H401" stroke="#385269" stroke-width="2"/>
+  <text x="55" y="397" class="b">三电系统测试</text><text x="55" y="435" class="s">BMS / SOC / 高压安全</text>
+  <text x="55" y="515" class="s">JD 要点与术语表进入提示词</text>
+  <path d="M450 294H499" class="line" marker-end="url(#arr)"/>
+  <rect x="515" y="25" width="545" height="535" rx="22" class="card"/>
+  <text x="556" y="88" class="h mint">服务端固定六题结构</text>
+  <rect x="555" y="143" width="132" height="132" rx="18" fill="#123B46" stroke="#7CFFCB" stroke-width="3"/>
+  <rect x="722" y="143" width="132" height="132" rx="18" fill="#123B46" stroke="#7CFFCB" stroke-width="3"/>
+  <rect x="889" y="143" width="132" height="132" rx="18" fill="#123B46" stroke="#7CFFCB" stroke-width="3"/>
+  <text x="595" y="204" class="h">2</text><text x="578" y="248" class="b">通用</text>
+  <text x="762" y="204" class="h">3</text><text x="745" y="248" class="b">专业</text>
+  <text x="929" y="204" class="h">1</text><text x="912" y="248" class="b">情景</text>
+  <path d="M568 330H1007" stroke="#58718A" stroke-width="2"/>
+  <text x="555" y="388" class="b">最新维护的题目按类型选入</text>
+  <text x="555" y="432" class="b">每题最多一层追问</text>
+  <text x="555" y="503" class="s">题型不足时阻止创建会话</text>
+  <path d="M1069 294H1118" class="line" marker-end="url(#arr)"/>
+  <rect x="1134" y="25" width="450" height="535" rx="22" class="card"/>
+  <text x="1175" y="88" class="h mint">形成岗位报告</text>
+  <rect x="1204" y="150" width="305" height="248" rx="12" fill="#102338" stroke="#7CFFCB" stroke-width="3"/>
+  <path d="M1250 210h207M1250 260h163M1250 310h185M1250 360h120" stroke="#8199AF" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="1472" cy="337" r="47" fill="#123B46" stroke="#7CFFCB" stroke-width="3"/>
+  <path d="M1446 337l16 16 34-39" fill="none" stroke="#7CFFCB" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="1175" y="468" class="b">问答与评分均围绕岗位任务</text>
+  <text x="1175" y="509" class="s">报告可回到原会话核对</text>
+  <text x="18" y="602" class="s">图示为已实现的数据与题型流程；岗位示例来自两类种子题库。</text>
+</svg>

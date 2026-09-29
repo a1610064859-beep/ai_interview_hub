@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="620" viewBox="0 0 1600 620">
+  <defs>
+    <style>
+      text{font-family:'Microsoft YaHei','Noto Sans CJK SC',sans-serif;fill:#F4F7FF}.h{font-size:32px;font-weight:700}.b{font-size:24px}.s{font-size:20px;fill:#BFCEE0}.mint{fill:#7CFFCB}.orange{fill:#FFAD66}
+      .card{fill:#081427;fill-opacity:.91;stroke:#58718A;stroke-width:2}.line{fill:none;stroke:#7CFFCB;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+    <marker id="arr" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto"><path d="M1 1L11 6 1 11" fill="none" stroke="#7CFFCB" stroke-width="2.5"/></marker>
+  </defs>
+  <rect x="20" y="76" width="365" height="420" rx="22" class="card"/>
+  <text x="56" y="131" class="h mint">学生回答原文</text>
+  <path d="M100 174h190l35 34v203H100zM290 174v34h35" fill="#0E2A38" stroke="#7CFFCB" stroke-width="3"/>
+  <path d="M132 252h164M132 296h146M132 340h163M132 384h104" stroke="#809AAD" stroke-width="9" stroke-linecap="round"/>
+  <text x="58" y="456" class="s">评分只依据已提交的回答</text>
+  <path d="M389 285H443" class="line" marker-end="url(#arr)"/>
+  <rect x="465" y="77" width="400" height="188" rx="20" class="card"/>
+  <rect x="465" y="306" width="400" height="188" rx="20" class="card"/>
+  <text x="505" y="133" class="h mint">独立评分 ①</text><text x="505" y="176" class="b">专业匹配 / 逻辑结构</text><text x="505" y="216" class="b">岗位素养：分数＋依据</text>
+  <text x="505" y="363" class="h mint">独立评分 ②</text><text x="505" y="406" class="b">对同一批回答再次评估</text><text x="505" y="446" class="s">两次有效结果按维度取均值</text>
+  <path d="M868 170H917V281H957M868 400H917V281H957" class="line" marker-end="url(#arr)"/>
+  <rect x="976" y="76" width="594" height="420" rx="22" class="card"/>
+  <text x="1015" y="132" class="h mint">逐维校验原话引用</text>
+  <rect x="1017" y="164" width="505" height="84" rx="13" fill="#10373B" stroke="#7CFFCB" stroke-width="2"/>
+  <text x="1045" y="200" class="b">1–25 字，且在单条回答中连续出现</text>
+  <text x="1016" y="299" class="b">无效引用 → 定向重试一次</text>
+  <text x="1016" y="341" class="b">仍无效 → 该维度“未评估”</text>
+  <path d="M1018 374H1527" stroke="#456075" stroke-width="2"/>
+  <text x="1016" y="422" class="b orange">有效维度生成报告与改进建议</text>
+  <text x="1016" y="462" class="s">表达流畅度另外由声学统计计算</text>
+  <text x="21" y="566" class="h mint">可核对的分数：评分结果能回到具体回答，缺失项保留为空。</text>
+  <text x="21" y="607" class="s">图示为评分机制；不代表模型判断一定正确，也不代表就业结果。</text>
+</svg>
