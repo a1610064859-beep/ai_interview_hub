@@ -4,7 +4,7 @@
   "fps": 25,
   "voice": "zh-CN-XiaoxiaoNeural",
   "date": "2026-09-29",
-  "duration": 194.88000000000002,
+  "duration": 196.20000000000002,
   "scenes": [
     {
       "key": "opening",
@@ -52,7 +52,7 @@
       "duration": 19.48,
       "start": 30.880000000000003,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "5c5e275313741da24be71009c753b1fcacaeffda23582bbc6c1fbef4d14009c7"
+      "image_sha256": "50d11bbeb8be9eb6040e32c253e7b55966ac32575beb26e1a8966daf55e3dc04"
     },
     {
       "key": "acoustic",
@@ -68,7 +68,7 @@
       "duration": 15.32,
       "start": 50.36,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "2912ff10cbd74ab4ed2dceed5b694adc31f778c1d84a6225bcbe0a3845871553"
+      "image_sha256": "153fb8ff84fafcf0d8a502d872b767b4be10c1406d6ff0ba94803051281f8c8b"
     },
     {
       "key": "report",
@@ -84,7 +84,7 @@
       "duration": 14.12,
       "start": 65.68,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "b3b96251ba880807411745e3399361ca0cd25c0f86d6a8772071d77f4b69b930"
+      "image_sha256": "8ede848a7b302c98c23a2e5f56ed0d3547b4411e3a706c0e535863e394b1161f"
     },
     {
       "key": "evidence",
@@ -100,23 +100,23 @@
       "duration": 15.8,
       "start": 79.80000000000001,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "2912ff10cbd74ab4ed2dceed5b694adc31f778c1d84a6225bcbe0a3845871553"
+      "image_sha256": "153fb8ff84fafcf0d8a502d872b767b4be10c1406d6ff0ba94803051281f8c8b"
     },
     {
       "key": "growth",
       "chapter": "07 / 成长记录",
       "title": "下一次训练，从上一次出发",
-      "lead": "同人同岗、同口径比较",
+      "lead": "同人同岗、共同维度变化",
       "labels": [],
       "image": "edge_growth.png",
       "diagram": "growth",
-      "voice": "练完一次，报告和建议不会消失。学生回到同一个岗位，可以翻看历史，再按建议继续练。这里目前只有一次记录，所以界面如实提示还不能计算变化；等有了可比训练，趋势才有意义。",
+      "voice": "第二次训练回来，成长页有了两点连成的线。专业、逻辑、岗位素养三项共同有效维度，模型观测均分从七十五到九十四点二。表达流畅度没有可比数据就留白；打开原报告，下一题该怎么练更清楚。",
       "audio": "deliverables/video_assets/narration_06.mp3",
-      "speech_duration": 16.608,
-      "duration": 17.92,
+      "speech_duration": 17.904,
+      "duration": 19.24,
       "start": 95.60000000000001,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "d340d902964c003a21dcdc338a178125eac17e9bab20981084ec1b1b209ac63f"
+      "image_sha256": "0d7ec638c60de89a6eca089a65740ba97fed25ed0656c73d118475e65a6efdc6"
     },
     {
       "key": "learning",
@@ -130,7 +130,7 @@
       "audio": "deliverables/video_assets/narration_07.mp3",
       "speech_duration": 15.96,
       "duration": 17.28,
-      "start": 113.52000000000001,
+      "start": 114.84,
       "visual_type": "real_page_screenshot",
       "image_sha256": "8dff069621d127e7e1e7f46bf723ccf17cc2df10b06d799ac95d9b89b5968b72"
     },
@@ -146,9 +146,9 @@
       "audio": "deliverables/video_assets/narration_08.mp3",
       "speech_duration": 14.352,
       "duration": 15.68,
-      "start": 130.8,
+      "start": 132.12,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "b8e5accbad6281032b8c1a26af1b0d7ce75fb28b8fc52af9a4df99c633298d45"
+      "image_sha256": "b121ac90e84800a0f1f67de85ab9a755aa093f6581e64c30faaf51147caca366"
     },
     {
       "key": "enterprise",
@@ -162,7 +162,7 @@
       "audio": "deliverables/video_assets/narration_09.mp3",
       "speech_duration": 14.112,
       "duration": 15.44,
-      "start": 146.48000000000002,
+      "start": 147.8,
       "visual_type": "real_page_screenshot",
       "image_sha256": "acf995b86857ef0dad93f318b353986727150fe54551701fac8fcfcc5d6380f4"
     },
@@ -178,9 +178,9 @@
       "audio": "deliverables/video_assets/narration_10.mp3",
       "speech_duration": 16.368,
       "duration": 17.68,
-      "start": 161.92000000000002,
+      "start": 163.24,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "5c5e275313741da24be71009c753b1fcacaeffda23582bbc6c1fbef4d14009c7"
+      "image_sha256": "50d11bbeb8be9eb6040e32c253e7b55966ac32575beb26e1a8966daf55e3dc04"
     },
     {
       "key": "closing",
@@ -194,9 +194,9 @@
       "audio": "deliverables/video_assets/narration_11.mp3",
       "speech_duration": 13.944,
       "duration": 15.28,
-      "start": 179.60000000000002,
+      "start": 180.92000000000002,
       "visual_type": "real_page_screenshot",
-      "image_sha256": "b3b96251ba880807411745e3399361ca0cd25c0f86d6a8772071d77f4b69b930"
+      "image_sha256": "8ede848a7b302c98c23a2e5f56ed0d3547b4411e3a706c0e535863e394b1161f"
     }
   ]
 }

@@ -3,7 +3,7 @@ Run: python deliverables/video_source/make_video.py --prepare
 Then: python deliverables/video_source/make_video.py --render
 """
 from __future__ import annotations
-import argparse, concurrent.futures, hashlib, json, math, re, subprocess
+import argparse, concurrent.futures, hashlib, json, math, os, re, subprocess
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -13,7 +13,7 @@ ASSETS = OUT / "video_assets"
 WORK = ROOT / "tmp" / "video"
 SOURCE = OUT / "video_source"
 FINAL = OUT / "智驾未来_AI面试仓_命题05演示.mp4"
-TTS_PY = ROOT / ".venv" / "Scripts" / "python.exe"
+TTS_PY = Path(os.environ.get("VIDEO_TTS_PYTHON", ROOT / ".venv" / "Scripts" / "python.exe"))
 W, H, FPS = 1920, 1080, 25
 BG, PANEL, INK, MUTED = "#07131e", "#102434", "#eef8ff", "#a7bccb"
 CYAN, ORANGE, LINE = "#65e1e7", "#ffb477", "#244253"
@@ -27,7 +27,7 @@ SCENES = [
  dict(key="acoustic",chapter="04 / 声学观察",title="表达节奏，也看得见",lead="语速、停顿、填充词",labels=[],image="edge_report_detail.png",diagram="acoustic",voice="表达不必只凭感觉。这份真实报告记录了每分钟一百七十八字的语速、二点三次停顿和二点六次填充词。数字让节奏问题变得具体，也为下一次练习指出方向。"),
  dict(key="report",chapter="05 / 能力报告",title="七十九点二分之后，还有为什么",lead="真实会话 #6 · 报告 #4",labels=[],image="edge_report_top.png",diagram="report",voice="这不是一张只会给分的成绩单。真实会话六得到七十九点二分，雷达图让优势和待补点一眼可见。每个维度旁边，都能找到解释和回答中的原话。"),
  dict(key="evidence",chapter="06 / 原话证据",title="把建议落到下一次回答",lead="证据、原因、改进建议",labels=[],image="edge_report_detail.png",diagram="evidence",voice="看见原话，才知道怎么改。系统核对引用是否真的出自回答，再给出具体建议；如果是文本训练，没有声音数据的维度就留空。认真评价，也认真对待不知道的部分。"),
- dict(key="growth",chapter="07 / 成长记录",title="下一次训练，从上一次出发",lead="同人同岗、同口径比较",labels=[],image="edge_growth.png",diagram="growth",voice="练完一次，报告和建议不会消失。学生回到同一个岗位，可以翻看历史，再按建议继续练。这里目前只有一次记录，所以界面如实提示还不能计算变化；等有了可比训练，趋势才有意义。"),
+ dict(key="growth",chapter="07 / 成长记录",title="下一次训练，从上一次出发",lead="同人同岗、共同维度变化",labels=[],image="edge_growth.png",diagram="growth",voice="第二次训练回来，成长页有了两点连成的线。专业、逻辑、岗位素养三项共同有效维度，模型观测均分从七十五到九十四点二。表达流畅度没有可比数据就留白；打开原报告，下一题该怎么练更清楚。"),
  dict(key="learning",chapter="08 / 面试学习",title="先学会讲，再大胆练",lead="从听题到讲清真实经历",labels=[],image="edge_learn.png",diagram="learning",voice="第一次面对面试题，不必急着背模板。先听懂考官在问什么，再把自己的真实经历讲清楚。经历题可以借助 STAR，知识题就先给依据、再做判断；不会的题，也能诚实而清楚地回应。"),
  dict(key="counsel",chapter="09 / 新生路径",title="把兴趣接到具体岗位",lead="岗位地图与学习路径",labels=[],image="edge_counsel_result.png",diagram="counsel",voice="新生填入专业、年级和兴趣，岗位地图便把智驾与三电的方向铺开：要补哪些技能、先做什么项目、下一学期怎么准备。看完路径，点一下就能进入对应岗位训练。"),
  dict(key="enterprise",chapter="10 / 企业初筛",title="候选卡片，能回到原始报告",lead="同源会话与岗位加权",labels=[],image="edge_recruiter_candidates.png",diagram="enterprise",voice="企业看板上的候选人，不是另做一份静态排行榜。卡片取自学生已经完成的会话和报告，在同岗位、同评分口径下加权排序。打开原报告，判断就有据可查。"),
@@ -109,7 +109,10 @@ def tts_one(pair):
  txt.write_text(scene["voice"],encoding="utf-8")
  fingerprint=hashlib.sha256((scene["voice"]+"zh-CN-XiaoxiaoNeural+8%").encode()).hexdigest();marker=ASSETS/f"narration_{idx:02d}.sha256"
  if not target.exists() or not marker.exists() or marker.read_text()!=fingerprint:
-  run([TTS_PY,"-m","edge_tts","--voice","zh-CN-XiaoxiaoNeural","--rate=+8%","--file",txt,"--write-media",target],timeout=150)
+  tts_env=os.environ.copy()
+  if os.environ.get("VIDEO_TTS_PYTHON"):
+   tts_env["PYTHONPATH"]=str(ROOT/".venv"/"Lib"/"site-packages")+os.pathsep+tts_env.get("PYTHONPATH","")
+  run([TTS_PY,"-m","edge_tts","--voice","zh-CN-XiaoxiaoNeural","--rate=+8%","--file",txt,"--write-media",target],timeout=150,env=tts_env)
   marker.write_text(fingerprint)
  scene["audio"]=str(target.relative_to(ROOT)).replace("\\","/")
  scene["speech_duration"]=duration(target);scene["duration"]=math.ceil((scene["speech_duration"]+1.3)*FPS)/FPS
@@ -161,7 +164,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def render_clip(pair):
  idx,scene=pair;frame=render_scene(scene,idx);target=WORK/f"clip_{idx:02d}.mp4";t=scene["duration"]
- vf=f"scale=1940:1092,crop=1920:1080:x='10+10*sin(t/2)':y='6+6*cos(t/3)',fade=t=in:st=0:d=0.28,fade=t=out:st={t-.28:.2f}:d=0.28"
+ vf=f"fade=t=in:st=0:d=0.28,fade=t=out:st={t-.28:.2f}:d=0.28"
  run(["ffmpeg","-hide_banner","-loglevel","error","-y","-loop","1","-framerate",FPS,"-i",frame,"-i",ROOT/scene["audio"],"-vf",vf,"-af","adelay=400|400,apad,loudnorm=I=-16:TP=-1.5:LRA=9","-t",t,"-c:v","libx264","-preset","fast","-crf","20","-pix_fmt","yuv420p","-r",FPS,"-c:a","aac","-b:a","160k","-ar","48000","-movflags","+faststart",target])
  print(f"Rendered {idx+1:02d}: {target.name}",flush=True);return target
 

@@ -8,7 +8,6 @@
       "codec_type": "video",
       "codec_tag_string": "avc1",
       "codec_tag": "0x31637661",
-      "mime_codec_string": "avc1.640028",
       "width": 1920,
       "height": 1080,
       "coded_width": 1920,
@@ -18,6 +17,7 @@
       "level": 40,
       "chroma_location": "left",
       "field_order": "progressive",
+      "refs": 1,
       "is_avc": "true",
       "nal_length_size": "4",
       "id": "0x1",
@@ -26,11 +26,11 @@
       "time_base": "1/12800",
       "start_pts": 0,
       "start_time": "0.000000",
-      "duration_ts": 2494976,
-      "duration": "194.920000",
-      "bit_rate": "308591",
+      "duration_ts": 2511872,
+      "duration": "196.240000",
+      "bit_rate": "254520",
       "bits_per_raw_sample": "8",
-      "nb_frames": "4873",
+      "nb_frames": "4906",
       "extradata_size": 47,
       "disposition": {
         "default": 1,
@@ -56,7 +56,8 @@
       "tags": {
         "language": "und",
         "handler_name": "VideoHandler",
-        "encoder": "Lavc62.28.100 libx264"
+        "vendor_id": "[0][0][0][0]",
+        "encoder": "Lavc62.11.100 libx264"
       }
     },
     {
@@ -67,7 +68,6 @@
       "codec_type": "audio",
       "codec_tag_string": "mp4a",
       "codec_tag": "0x6134706d",
-      "mime_codec_string": "mp4a.40.2",
       "sample_fmt": "fltp",
       "sample_rate": "48000",
       "channels": 1,
@@ -80,10 +80,10 @@
       "time_base": "1/48000",
       "start_pts": 0,
       "start_time": "0.000000",
-      "duration_ts": 9355264,
-      "duration": "194.901333",
-      "bit_rate": "136854",
-      "nb_frames": "9151",
+      "duration_ts": 9418624,
+      "duration": "196.221333",
+      "bit_rate": "138025",
+      "nb_frames": "9213",
       "extradata_size": 5,
       "disposition": {
         "default": 1,
@@ -108,7 +108,8 @@
       },
       "tags": {
         "language": "und",
-        "handler_name": "SoundHandler"
+        "handler_name": "SoundHandler",
+        "vendor_id": "[0][0][0][0]"
       }
     }
   ],
@@ -120,15 +121,15 @@
     "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
     "format_long_name": "QuickTime / MOV",
     "start_time": "0.000000",
-    "duration": "194.920000",
-    "size": "11003299",
-    "bit_rate": "451602",
+    "duration": "196.240000",
+    "size": "9778008",
+    "bit_rate": "398614",
     "probe_score": 100,
     "tags": {
       "major_brand": "isom",
       "minor_version": "512",
       "compatible_brands": "isomiso2avc1mp41",
-      "encoder": "Lavf62.12.100"
+      "encoder": "Lavf62.3.100"
     }
   }
 }
