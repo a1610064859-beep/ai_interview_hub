@@ -15,6 +15,10 @@ class SessionStateResponse(BaseModel):
     question: QuestionResponse | None
     is_followup: bool
     report_id: int | None
+    user_id: int
+    job_id: int
+    mode: Literal["毕业生", "新生"]
+    input_mode: Literal["text", "voice"] | None
 
 
 class SessionCreateRequest(BaseModel):

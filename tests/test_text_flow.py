@@ -91,6 +91,20 @@ def test_happy_path_full_text_interview():
         assert ans_data["question"]["text"] == "请展开说明如何使用CANoe排查总线？"
 
     # 验证 DB: answers 存了一条主问题作答，当前待答是追问
+    state_resp = client.get(f"/api/sessions/{sid}/state")
+    assert state_resp.status_code == 200
+    assert state_resp.json() == {
+        "sid": sid,
+        "status": "active",
+        "answer_count": 1,
+        "question": ans_data["question"],
+        "is_followup": True,
+        "report_id": None,
+        "user_id": 1,
+        "job_id": 1,
+        "mode": "毕业生",
+        "input_mode": "text",
+    }
     with SessionLocal() as db:
         ans_list = db.query(Answer).filter(Answer.session_id == sid).all()
         assert len(ans_list) == 1
@@ -112,6 +126,11 @@ def test_happy_path_full_text_interview():
     assert ans_data["type"] == "next"
     assert ans_data["question"]["seq"] == 2
     assert ans_data["question"]["audio_url"] is None
+
+    state_resp = client.get(f"/api/sessions/{sid}/state")
+    assert state_resp.status_code == 200
+    assert state_resp.json()["answer_count"] == 2
+    assert state_resp.json()["question"] == ans_data["question"]
 
     # 验证填充词识别 (那个, 然后)
     with SessionLocal() as db:
@@ -158,6 +177,13 @@ def test_happy_path_full_text_interview():
         assert ans_data["type"] == "done"
         assert "report_id" in ans_data
         report_id = ans_data["report_id"]
+
+    completed_state = client.get(f"/api/sessions/{sid}/state")
+    assert completed_state.status_code == 200
+    assert completed_state.json()["status"] == "completed"
+    assert completed_state.json()["answer_count"] == 7
+    assert completed_state.json()["question"] is None
+    assert completed_state.json()["report_id"] == report_id
 
     # 6. 查询报告 GET /api/reports/{sid}
     rep_resp = client.get(f"/api/reports/{sid}")

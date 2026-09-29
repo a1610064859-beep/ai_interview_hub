@@ -80,6 +80,8 @@ def get_session_state(request: Request, sid: int = Path(..., ge=1)):
             sid=sid, status=sess.status, answer_count=answer_count,
             question=question,
             is_followup=bool(pending.get("is_followup", False)), report_id=rid,
+            user_id=sess.user_id, job_id=sess.job_id, mode=sess.mode,
+            input_mode=sess.input_mode,
         )
 
 

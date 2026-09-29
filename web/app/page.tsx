@@ -23,6 +23,8 @@ import {
 } from "../lib/recorder";
 import {
   CONFIRMING_NOTICE,
+  REPORT_POLL_INTERVAL_MS,
+  REPORT_POLL_MAX_MS,
   TIMEOUT_NOTICE,
   isAmbiguousSubmitFailure,
   resolveAfterAnswerSubmit,
@@ -31,6 +33,14 @@ import {
   type RecoveryDeps,
   type ResolveOutcome,
 } from "../lib/session-recovery";
+import {
+  SESSION_PROGRESS_KEY,
+  canResumeSession,
+  parseSavedSessionState,
+  parseSessionProgress,
+  type SavedSessionState,
+  type SessionProgress,
+} from "../lib/session-progress";
 import {
   buildSessionCreateBody,
   canCreateSession,
@@ -44,6 +54,28 @@ import {
 
 const TOTAL_QUESTIONS = 6;
 const MOCK_FOLLOWUP_SEQ = 2;
+
+function readSessionProgress(): SessionProgress | null {
+  try {
+    const raw = window.localStorage.getItem(SESSION_PROGRESS_KEY);
+    if (!raw) return null;
+    const parsed = parseSessionProgress(JSON.parse(raw));
+    if (!parsed) window.localStorage.removeItem(SESSION_PROGRESS_KEY);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveSessionProgress(progress: SessionProgress): void {
+  try { window.localStorage.setItem(SESSION_PROGRESS_KEY, JSON.stringify(progress)); } catch { /* storage may be disabled */ }
+}
+
+function clearSessionProgress(sid: number): void {
+  try {
+    if (readSessionProgress()?.sid === sid) window.localStorage.removeItem(SESSION_PROGRESS_KEY);
+  } catch { /* storage may be disabled */ }
+}
 const MIN_ANSWER_LEN = 1;
 const MAX_ANSWER_LEN = 5000;
 /** 进入面试舱的过场动画时长（AGENTS §9）。 */
@@ -147,6 +179,7 @@ export default function HomePage() {
   const createLock = useRef(false);
   const submitLock = useRef(false);
   const [answerLog, setAnswerLog] = useState<AnswerLogEntry[]>([]);
+  const [savedAnswerCount, setSavedAnswerCount] = useState(0);
   const [answerFeedback, setAnswerFeedback] = useState<AnswerFeedbackView | null>(null);
   const [learningTopic, setLearningTopic] = useState<LearningTopic | "menu" | null>(null);
   const interviewScrollRef = useRef(0);
@@ -220,6 +253,72 @@ export default function HomePage() {
         return;
       }
       setCurrentStudent(account);
+      const saved = readSessionProgress();
+      const hasNewTrainingLink = new URLSearchParams(window.location.search).has("job_id");
+      if (saved && saved.userId === account.id && !hasNewTrainingLink) {
+        const savedJob = jobsResult.value.find((item) => item.id === saved.jobId);
+        if (savedJob) {
+          try {
+            let state: SavedSessionState | null = null;
+            const maxChecks = Math.ceil(REPORT_POLL_MAX_MS / REPORT_POLL_INTERVAL_MS);
+            for (let check = 0; check < maxChecks; check += 1) {
+              const response = await fetch(`/api/sessions/${saved.sid}/state`, { cache: "no-store" });
+              if (!alive) return;
+              if (response.status === 404) {
+                clearSessionProgress(saved.sid);
+                break;
+              }
+              if (!response.ok) {
+                setView({ phase: "error", message: "暂时无法核对已保存的答题进度，请刷新页面重试。" });
+                return;
+              }
+              state = parseSavedSessionState(await response.json());
+              if (!alive) return;
+              if (!state || state.sid !== saved.sid || state.userId !== account.id ||
+                  state.jobId !== saved.jobId || state.mode !== saved.mode) {
+                setView({ phase: "error", message: "已保存的会话状态不一致，请刷新页面核对。" });
+                return;
+              }
+              if (state.status !== "answering") break;
+              if (check + 1 < maxChecks) {
+                await new Promise<void>((resolve) => setTimeout(resolve, REPORT_POLL_INTERVAL_MS));
+                if (!alive) return;
+              }
+            }
+            if (state?.status === "answering") {
+              setView({ phase: "error", message: "上一题仍在处理，暂不能继续答题。请稍后刷新页面核对保存结果。" });
+              return;
+            }
+            if (state?.status === "completed") {
+              if (state.reportId === null) {
+                setView({ phase: "error", message: "面试已完成，但报告尚未就绪。请稍后刷新页面。" });
+                return;
+              }
+              interviewIdentityRef.current = { userId: saved.userId, jobId: saved.jobId };
+              persistInterviewIdentity(interviewIdentityRef.current);
+              clearSessionProgress(saved.sid);
+              router.push(buildInterviewReportHref(saved.sid));
+              return;
+            }
+            if (state && canResumeSession(saved, state) && state.question) {
+              interviewIdentityRef.current = { userId: saved.userId, jobId: saved.jobId };
+              persistInterviewIdentity(interviewIdentityRef.current);
+              setSavedAnswerCount(state.answerCount);
+              setAnswerInputMode(state.inputMode);
+              setNotice(`已恢复会话 ${saved.sid}，服务器已保存 ${state.answerCount} 条回答。`);
+              setView({ phase: "interview", mode: "real", job: savedJob, sid: saved.sid,
+                question: state.question, isFollowup: state.isFollowup,
+                startedAtMs: saved.startedAtMs, transitionAudioUrls: [], transitionAudioUrl: null,
+                userId: saved.userId, audienceMode: saved.mode });
+              return;
+            }
+          } catch {
+            if (!alive) return;
+            setView({ phase: "error", message: "暂时无法核对已保存的答题进度，请刷新页面重试。" });
+            return;
+          }
+        }
+      }
       setView({ phase: "jobs", mode: "real", jobs: jobsResult.value });
     })();
     return () => {
@@ -301,6 +400,7 @@ export default function HomePage() {
     setAnswerHint(null);
     setAnswerInputMode(null);
     setAnswerLog([]);
+    setSavedAnswerCount(0);
     setVoicePhase("idle");
     setVoiceMeta(null);
     setLevel(0);
@@ -394,6 +494,7 @@ export default function HomePage() {
     setNotice(null);
     setConfirmHref(null);
     if (pending.answer.type === "done") {
+      clearSessionProgress(sid);
       submitLock.current = false;
       voiceSubmitLockRef.current = false;
       setBusy(false);
@@ -419,6 +520,7 @@ export default function HomePage() {
     channel: "voice" | "text",
   ): Promise<"navigated" | "advanced" | "stopped"> {
     if (outcome.outcome === "report_ready") {
+      clearSessionProgress(sid);
       router.push(buildInterviewReportHref(sid));
       return "navigated";
     }
@@ -713,6 +815,8 @@ export default function HomePage() {
 
     interviewIdentityRef.current = { userId: realUserId as number, jobId: job.id };
     persistInterviewIdentity({ userId: realUserId as number, jobId: job.id });
+    saveSessionProgress({ sid: result.sid, userId: realUserId as number,
+      jobId: job.id, mode: realAudienceMode as AudienceMode, startedAtMs: Date.now() });
 
     setView({
       phase: "interview",
@@ -804,7 +908,7 @@ export default function HomePage() {
     recorderRef.current = null;
     setVoiceMeta(`本次录音：时长 ${recording.durationS} 秒 · 停顿 ${recording.pauseCnt} 次`);
     // 提交回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖 ASR 与大模型时延（AGENTS §6.2）
-    playTransitionAudio(view.transitionAudioUrls, answerLog.length);
+    playTransitionAudio(view.transitionAudioUrls, savedAnswerCount);
     await submitAudioAnswer(view, recording);
   }
 
@@ -817,7 +921,7 @@ export default function HomePage() {
     );
     setVoicePhase("idle");
 
-    const resolved = await resolveSubmitResult(result, view.sid, "voice", answerLog.length);
+    const resolved = await resolveSubmitResult(result, view.sid, "voice", savedAnswerCount);
     if (resolved.flow === "navigated" || resolved.flow === "stopped") {
       return;
     }
@@ -838,6 +942,7 @@ export default function HomePage() {
       },
     ]);
     setAnswerInputMode((current) => current ?? "voice");
+    setSavedAnswerCount((count) => count + 1);
 
     if (view.audienceMode === "新生") {
       await showAnswerFeedback(view, value);
@@ -845,6 +950,7 @@ export default function HomePage() {
     }
 
     if (value.type === "done") {
+      clearSessionProgress(view.sid);
       voiceSubmitLockRef.current = false;
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
       router.push(buildInterviewReportHref(view.sid));
@@ -914,9 +1020,9 @@ export default function HomePage() {
     const seq = view.question.seq;
     const wasFollowup = view.isFollowup;
     // 提交文本回答后按当前提交轮次（answerLog.length）轮转播放过渡语，掩盖大模型时延（AGENTS §6.2）
-    playTransitionAudio(view.transitionAudioUrls, answerLog.length);
+    playTransitionAudio(view.transitionAudioUrls, savedAnswerCount);
     const result = await requestTextAnswer(view.sid, normalized);
-    const resolved = await resolveSubmitResult(result, view.sid, "text", answerLog.length);
+    const resolved = await resolveSubmitResult(result, view.sid, "text", savedAnswerCount);
     if (resolved.flow === "navigated" || resolved.flow === "stopped") {
       return;
     }
@@ -935,6 +1041,7 @@ export default function HomePage() {
       },
     ]);
     setAnswerInputMode((current) => current ?? "text");
+    setSavedAnswerCount((count) => count + 1);
 
     if (view.audienceMode === "新生") {
       setAnswerText("");
@@ -943,6 +1050,7 @@ export default function HomePage() {
     }
 
     if (value.type === "done") {
+      clearSessionProgress(view.sid);
       // 路由必须用创建会话得到的 sid，禁止把 report_id 当作路径参数。
       router.push(buildInterviewReportHref(view.sid));
       return;
@@ -1155,6 +1263,7 @@ export default function HomePage() {
             elapsed={elapsed}
             voiceMeta={voiceMeta}
             answerLog={answerLog}
+            savedAnswerCount={view.mode === "real" ? savedAnswerCount : answerLog.length}
             answerInputMode={answerInputMode}
             onAnswerChange={(value) => {
               setAnswerText(value);
@@ -1411,6 +1520,7 @@ function InterviewPanel({
   elapsed,
   voiceMeta,
   answerLog,
+  savedAnswerCount,
   answerInputMode,
   onAnswerChange,
   onSubmit,
@@ -1434,6 +1544,7 @@ function InterviewPanel({
   elapsed: number;
   voiceMeta: string | null;
   answerLog: AnswerLogEntry[];
+  savedAnswerCount: number;
   answerInputMode: AnswerLogEntry["kind"] | null;
   onAnswerChange: (value: string) => void;
   onSubmit: () => void;
@@ -1629,10 +1740,12 @@ function InterviewPanel({
           <div className="mt-6 border-t border-[#1d2c4e] pt-4">
             <div className="flex items-center justify-between">
               <p className="text-xs text-[#5b6b85]">回答记录与转写轨迹（本会话）</p>
-              <span className="text-xs text-[#5b6b85]">共 {answerLog.length} 条</span>
+              <span className="text-xs text-[#7eb6ff]" role="status">已逐题保存 {savedAnswerCount} 条</span>
             </div>
             {answerLog.length === 0 ? (
-              <p className="mt-2 text-xs text-[#5b6b85]">暂无已提交回答。</p>
+              <p className="mt-2 text-xs text-[#5b6b85]">
+                {savedAnswerCount > 0 ? "此前回答已保存在服务器，可继续当前题目。" : "暂无已提交回答。"}
+              </p>
             ) : (
               <div className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-1" aria-label="ASR转写轨迹">
                 {answerLog.map((entry) => (
