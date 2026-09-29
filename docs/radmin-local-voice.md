@@ -1,6 +1,6 @@
 # Radmin VPN 本机语音面试
 
-面试服务器只在主机运行。远端 Windows 电脑录音后，经 Radmin VPN 上传到主机；主机现有 `POST /api/sessions/{sid}/answers` 接口将 webm 临时保存、转为 wav、执行本地 ASR 与评分，最后返回下一题或报告 ID。临时音频在请求结束后清理。后端 `8000` 端口仍只监听主机 `127.0.0.1`。
+面试服务器只在主机运行。远端 Windows 电脑录音后，经 Radmin VPN 上传到主机；主机现有 `POST /api/sessions/{sid}/answers` 接口将 webm 临时保存、转为 wav、执行本地 ASR 与评分，最后返回下一题或报告 ID。临时音频在请求结束后清理。后端 `8000` 端口只绑定主机 `127.0.0.1`；Radmin VPN 只转发网页端口 `3000`，网页再通过本机代理访问后端。
 
 ## 主机
 
