@@ -1066,7 +1066,7 @@ export default function HomePage() {
                   >
                     {view.mode === "real"
                       ? ready
-                        ? "选择并自检设备"
+                        ? "选择岗位并继续"
                         : "当前账号信息缺失"
                       : "选择此岗位"}
                   </button>
@@ -1081,6 +1081,10 @@ export default function HomePage() {
         <DeviceCheckPanel
           job={view.job}
           onPass={() => {
+            void enterInterview("real", view.job);
+          }}
+          onTextOnly={() => {
+            setAnswerInputMode("text");
             void enterInterview("real", view.job);
           }}
         />
@@ -1186,9 +1190,11 @@ export default function HomePage() {
 function DeviceCheckPanel({
   job,
   onPass,
+  onTextOnly,
 }: {
   job: Job;
   onPass: () => void;
+  onTextOnly: () => void;
 }) {
   const [status, setStatus] = useState<
     "idle" | "recording" | "confirm" | "playback_failed"
@@ -1289,11 +1295,19 @@ function DeviceCheckPanel({
     onPass();
   }
 
+  function handleTextOnly() {
+    if (passLockRef.current) {
+      return;
+    }
+    passLockRef.current = true;
+    onTextOnly();
+  }
+
   return (
     <section className="min-w-0 max-w-full rounded-3xl border border-[#2f6fed] bg-[#0c1730]/95 p-4 shadow-[0_0_32px_rgba(47,111,237,0.35)] sm:p-5">
-      <h2 className="text-xl text-white">设备自检</h2>
+      <h2 className="text-xl text-white">麦克风自检（语音面试可选）</h2>
       <p className="mt-2 break-anywhere text-sm leading-6 text-[#b7c8e2]">
-        岗位「{job.title}」已选择。开始前请完成 3 秒麦克风自检：录音后回放，确认能听到自己的声音。
+        已选择岗位「{job.title}」。麦克风自检只用于语音作答；也可以跳过自检，直接进入纯文字面试。
       </p>
 
       {message ? (
@@ -1366,6 +1380,14 @@ function DeviceCheckPanel({
             重试自检
           </button>
         ) : null}
+        <button
+          type="button"
+          className="max-w-full rounded-full border border-[#7eb6ff] bg-[#0c1730] px-4 py-2 text-sm font-medium text-[#b7d7ff] hover:bg-[#152544] disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={passLockRef.current}
+          onClick={handleTextOnly}
+        >
+          跳过自检，开始纯文字面试
+        </button>
       </div>
     </section>
   );
