@@ -1,0 +1,246 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 25,
+  "voice": "zh-CN-YunxiNeural",
+  "date": "2026-09-29",
+  "duration": 179.8,
+  "scenes": [
+    {
+      "key": "opening",
+      "chapter": "01 / 项目定位",
+      "title": "智驾未来\nAI 面试仓",
+      "lead": "让每一次训练，\n都有下一步。",
+      "labels": [
+        "岗位定向",
+        "可解释评分",
+        "三端闭环"
+      ],
+      "image": null,
+      "diagram": "triple",
+      "voice": "面向智能汽车产业，智驾未来 AI 面试仓，把岗位认知、面试训练和企业初筛连接起来。围绕命题零五，我们将一次面试，变成可以解释、复盘和再次训练的学习过程。",
+      "audio": "deliverables/video_assets/narration_00.mp3",
+      "speech_duration": 14.256,
+      "duration": 15.56,
+      "start": 0,
+      "visual_type": "labeled_mechanism_illustration"
+    },
+    {
+      "key": "jobs",
+      "chapter": "02 / 岗位准备",
+      "title": "两个种子岗位\n做深专业训练",
+      "lead": "智驾测试 · 三电系统测试\n岗位术语与 JD 要点进入题目语境。",
+      "labels": [
+        "固定 2 题",
+        "专业 3 题",
+        "情景 1 题"
+      ],
+      "image": "jobs.png",
+      "diagram": "jobs",
+      "voice": "学生先选择目标岗位。项目聚焦智驾测试和三电系统测试两个种子岗位，用岗位术语和 JD 要点组织题库。六道主问题覆盖基础表达、专业知识和工作情景。",
+      "audio": "deliverables/video_assets/narration_01.mp3",
+      "speech_duration": 14.112,
+      "duration": 15.44,
+      "start": 15.56,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "aee956b25934ec4616fdae836467e5a254801df9984cfd9e7f87c823f76f2444"
+    },
+    {
+      "key": "interview",
+      "chapter": "03 / 面试过程",
+      "title": "听题、回答\n逐步完成训练",
+      "lead": "语音提问与回答转写\n题目进度由服务端保存。",
+      "labels": [
+        "语音输入",
+        "文本备用",
+        "每题最多一次追问"
+      ],
+      "image": "interview.png",
+      "diagram": "flow",
+      "voice": "进入面试后，系统朗读问题，学生通过语音回答，也可以使用文本模式。服务端保存面试状态，每道题最多追问一次；追问服务失败时，直接进入下一题。",
+      "audio": "deliverables/video_assets/narration_02.mp3",
+      "speech_duration": 12.336,
+      "duration": 13.64,
+      "start": 31.0,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "be10b46ada25f60828212a3053a1d0f89e44061bcce0e7f59890b12d5fcda448"
+    },
+    {
+      "key": "acoustic",
+      "chapter": "04 / 表达量化",
+      "title": "把表达习惯\n变成可读指标",
+      "lead": "同一份真实报告中的声学观测\n语速、停顿与填充词共同提供依据。",
+      "labels": [
+        "178 字 / 分",
+        "2.3 次停顿 / 分",
+        "2.6 次填充词 / 分"
+      ],
+      "image": "report_acoustic.png",
+      "diagram": "acoustic",
+      "voice": "语音训练记录语速、停顿和填充词。这份报告显示，语速为每分钟一百七十八字，停顿二点三次，填充词二点六次。量化值帮助解释表达习惯，不能替代专业能力判断。",
+      "audio": "deliverables/video_assets/narration_03.mp3",
+      "speech_duration": 14.136,
+      "duration": 15.44,
+      "start": 44.64,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "e5a77e091a9ab8d93204b3a5513517cfb9e7b5d50caf56b1281018e1f91b3ce2"
+    },
+    {
+      "key": "report",
+      "chapter": "05 / 可解释报告",
+      "title": "评分之后\n看得见依据",
+      "lead": "真实会话 #6 · 报告 #4\n综合评定 79.2 分。",
+      "labels": [
+        "四维评估",
+        "原话证据",
+        "具体改进建议"
+      ],
+      "image": "report.png",
+      "diagram": "report",
+      "voice": "训练完成后，报告用四个维度呈现表现。这是会话六的真实报告，综合评定七十九点二分。分数旁边保留原话依据、原因和改进建议，帮助学生理解为什么，以及下一步怎么练。",
+      "audio": "deliverables/video_assets/narration_04.mp3",
+      "speech_duration": 14.088,
+      "duration": 15.4,
+      "start": 60.08,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "5fb36c25b07a5d16091f7f1a9a28ae3dac906f833b78567d913718c80a302826"
+    },
+    {
+      "key": "evidence",
+      "chapter": "06 / 公平与边界",
+      "title": "有证据才评价\n缺失就不补分",
+      "lead": "文本训练不评估语音流畅度\n缺失维度显示“未评估”。",
+      "labels": [
+        "两次独立评分",
+        "引用原回答",
+        "有效维度计算均值"
+      ],
+      "image": "report_evidence.png",
+      "diagram": "evidence",
+      "voice": "评分按两次独立调用汇总，并校验引用是否来自原回答。文本训练没有真实声学信息，表达流畅度就显示未评估；缺失维度不会填成零分，也不会凭空生成语音表现。",
+      "audio": "deliverables/video_assets/narration_05.mp3",
+      "speech_duration": 13.152,
+      "duration": 14.48,
+      "start": 75.48,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "6b0647ed2881778bb4cb24ed05a142d565273c3c0302f0688a308597749bbc9b"
+    },
+    {
+      "key": "growth",
+      "chapter": "07 / 训练复盘",
+      "title": "记录真实变化\n不虚构成长",
+      "lead": "同一学生 · 同一岗位 · 可比口径\n历史报告与建议可以回看。",
+      "labels": [
+        "当前只有一次记录",
+        "不计算增减",
+        "支持再次训练"
+      ],
+      "image": "growth.png",
+      "diagram": "growth",
+      "voice": "成长记录按学生和岗位隔离，只比较口径一致、同时有效的维度。本次演示只有一条训练记录，所以页面明确提示暂时无法比较。系统保留历史报告和建议，支持下一次训练。",
+      "audio": "deliverables/video_assets/narration_06.mp3",
+      "speech_duration": 14.112,
+      "duration": 15.44,
+      "start": 89.96000000000001,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "dd794824ee00c10fcc7df3d50b9cc91999811c76c2208caee22708b20d1dd111"
+    },
+    {
+      "key": "learning",
+      "chapter": "08 / 新生学习",
+      "title": "先学会表达\n再写自己的答案",
+      "lead": "识别 → 诊断 → 搭建 → 练习\n理解题意，组织真实经历。",
+      "labels": [
+        "STAR 经历题",
+        "诚实说明不会",
+        "按报告复盘"
+      ],
+      "image": "learn.png",
+      "diagram": "learning",
+      "voice": "新生可以进入面试学习菜单，从识别题意、诊断问题，到搭建结构，再写自己的答案。经历题学习 STAR，知识题不生搬硬套；也练习澄清问题和诚实说明不会的内容。",
+      "audio": "deliverables/video_assets/narration_07.mp3",
+      "speech_duration": 12.84,
+      "duration": 14.16,
+      "start": 105.4,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "7c44423d052c147e1aaf0843cbaf67e07bc76a2dd3160667ebeb96fdbfd9d726"
+    },
+    {
+      "key": "counsel",
+      "chapter": "09 / 岗位认知",
+      "title": "从专业兴趣\n走向岗位路径",
+      "lead": "输入专业、年级与兴趣\n查看岗位地图、能力差距和学习路径。",
+      "labels": [
+        "不生成咨询分数",
+        "可进入岗位训练",
+        "静态建议持续可用"
+      ],
+      "image": "counsel.png",
+      "diagram": "counsel",
+      "voice": "新生输入专业、年级和兴趣，可以查看岗位地图、能力差距和学习路径。本次咨询触发了静态回退，页面仍然提供可用建议。咨询本身不会虚构面试分数。",
+      "audio": "deliverables/video_assets/narration_08.mp3",
+      "speech_duration": 13.128,
+      "duration": 14.44,
+      "start": 119.56,
+      "visual_type": "real_page_screenshot",
+      "image_sha256": "6628485fda8c7e0e759d5663ec985b508d11907a959aff03d5665f5a3e178cbf"
+    },
+    {
+      "key": "enterprise",
+      "chapter": "10 / 企业初筛",
+      "title": "候选排序\n回到同源证据",
+      "lead": "同岗位 · 每位学生一条候选记录\n可追溯至原始会话和报告。",
+      "labels": [
+        "岗位权重",
+        "分评分口径",
+        "缺维不按零分处罚"
+      ],
+      "image": "recruiter.png",
+      "diagram": "enterprise",
+      "voice": "企业端围绕岗位需求组织评估维度和题库。候选记录来自学生端已经落库的会话和报告，同一岗位每位学生保留一条符合要求的候选记录，并区分评分口径，支持回看原始证据。",
+      "audio": "deliverables/video_assets/narration_09.mp3",
+      "speech_duration": 13.752,
+      "duration": 15.08,
+      "start": 134.0,
+      "visual_type": "labeled_mechanism_illustration"
+    },
+    {
+      "key": "architecture",
+      "chapter": "11 / 技术支撑",
+      "title": "关键能力\n落在可运行链路",
+      "lead": "Next.js / FastAPI / SQLite\n本地语音识别 + 模型分级回退。",
+      "labels": [
+        "岗位知识注入",
+        "声学特征量化",
+        "原话证据校验"
+      ],
+      "image": null,
+      "diagram": "architecture",
+      "voice": "前端负责交互，后端统一编排、评分和数据保存。本地语音识别配合语音合成，模型按旗舰、普通云端和本地模型分级回退，让关键功能在服务波动时保持可用。",
+      "audio": "deliverables/video_assets/narration_10.mp3",
+      "speech_duration": 13.248,
+      "duration": 14.56,
+      "start": 149.08,
+      "visual_type": "labeled_mechanism_illustration"
+    },
+    {
+      "key": "closing",
+      "chapter": "12 / 命题回应",
+      "title": "从一次回答\n到下一次进步",
+      "lead": "学生训练有反馈\n新生学习有方向\n企业初筛有依据",
+      "labels": [
+        "本机 / 局域网运行",
+        "真实记录",
+        "可解释反馈"
+      ],
+      "image": null,
+      "diagram": "triple",
+      "voice": "岗位定向题库、声学量化和原话证据，是项目的三个创新支点。我们面向本机和局域网应用，让学生训练有反馈，新生学习有方向，企业初筛有依据。智驾未来，AI 面试仓。",
+      "audio": "deliverables/video_assets/narration_11.mp3",
+      "speech_duration": 14.856,
+      "duration": 16.16,
+      "start": 163.64000000000001,
+      "visual_type": "labeled_mechanism_illustration"
+    }
+  ]
+}

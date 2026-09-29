@@ -121,12 +121,12 @@ def setup_growth_db(monkeypatch):
                     dims_json={},
                 )
             )
-            for qi in range(1, 7):
+            for qi, question_type in enumerate(("通用", "通用", "专业", "专业", "专业", "情景"), start=1):
                 db.add(
                     Question(
                         id=(jid - 1) * 6 + qi,
                         job_id=jid,
-                        type="专业",
+                        type=question_type,
                         text=f"岗位{jid}第{qi}题",
                         followup_hint=None,
                     )
