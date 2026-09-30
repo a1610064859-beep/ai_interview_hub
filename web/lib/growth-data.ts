@@ -606,22 +606,20 @@ function uniqueCohortKeys(timeline: TimelinePoint[]): string[] {
   return keys;
 }
 
-function parseCohortKey(key: string): {
-  inputMode: InputModeValue | null;
-  scoringVersion: string | null;
-} {
-  const [modeRaw, verRaw] = key.split("|");
-  const inputMode: InputModeValue | null =
-    modeRaw === "text" || modeRaw === "voice" ? modeRaw : null;
-  const scoringVersion = verRaw === "legacy" ? null : verRaw;
-  return { inputMode, scoringVersion };
+function overallGroupKey(point: TimelinePoint): string {
+  const validDimensions = REQUIRED_DIMENSIONS.filter((dim) => point.dimensions[dim] !== null);
+  if (point.inputMode === null || !point.scoringVersion?.trim() || validDimensions.length === 0) {
+    return `session:${point.sessionId}`;
+  }
+  return JSON.stringify([point.inputMode, point.scoringVersion, validDimensions]);
 }
 
 /**
  * 折线图：null 保持为 null（不补 0）；connectNulls 恒为 false。
- * 多 cohort 时总体分按输入模式和评分版本拆分；非声学有效维度可在同一已知评分版本内跨输入模式连线。
- * 缺失维度及未知/不同评分版本始终断线。
- * 单 cohort 时保持一条综合分 + 四维折线。
+ * 综合分仅在已知输入模式、评分版本和有效维度集合相同的记录间连线。
+ * 非声学有效维度可在同一已知评分版本内跨输入模式连线。
+ * 综合分未知口径或空有效维度集合保留独立点；各维度 null 不补零、不跨 null 连线。
+ * 单 cohort 且有效维度集合一致时保持一条综合分 + 四维折线。
  */
 export function transformTrendToLineOptions(
   trend: GrowthTrendData,
@@ -635,6 +633,26 @@ export function transformTrendToLineOptions(
   const categories = timeline.map((p) => `#${p.sessionId}`);
   const cohortKeys = uniqueCohortKeys(timeline);
   const multiCohort = cohortKeys.length > 1;
+  const overallKeys = [...new Set(timeline.map(overallGroupKey))];
+  const overallBaseName = (point: TimelinePoint) =>
+    `${multiCohort ? `${cohortDisplayLabel(point.inputMode, point.scoringVersion)} ` : ""}综合分`;
+  const overallSeries = overallKeys.map((key) => {
+    const first = timeline.find((point) => overallGroupKey(point) === key)!;
+    const baseName = overallBaseName(first);
+    const duplicateName = overallKeys.some((otherKey) =>
+      otherKey !== key && overallBaseName(timeline.find((point) => overallGroupKey(point) === otherKey)!) === baseName,
+    );
+    const validDimensions = REQUIRED_DIMENSIONS.filter((dim) => first.dimensions[dim] !== null);
+    const detail = key.startsWith("session:")
+      ? `#${first.sessionId}`
+      : validDimensions.map((dim) => DIMENSION_LABEL_MAP[dim]).join("、");
+    return {
+      name: duplicateName ? `${baseName}（${detail}）` : baseName,
+      type: "line",
+      connectNulls,
+      data: timeline.map((point) => overallGroupKey(point) === key ? point.overall : null),
+    };
+  });
 
   const baseChart = {
     tooltip: {
@@ -662,7 +680,7 @@ export function transformTrendToLineOptions(
     return {
       ...baseChart,
       legend: {
-        data: ["综合分", ...REQUIRED_DIMENSIONS.map((k) => DIMENSION_LABEL_MAP[k])],
+        data: [...overallSeries.map((series) => series.name), ...REQUIRED_DIMENSIONS.map((k) => DIMENSION_LABEL_MAP[k])],
         textStyle: { color: labelColor },
       },
       xAxis: {
@@ -670,35 +688,13 @@ export function transformTrendToLineOptions(
         data: categories,
         axisLabel: { color: labelColor },
       },
-      series: [
-        {
-          name: "综合分",
-          type: "line",
-          connectNulls,
-          data: timeline.map((p) => p.overall),
-        },
-        ...dimensionSeries,
-      ],
+      series: [...overallSeries, ...dimensionSeries],
       _meta: { connectNulls: false, mixed: false, multiCohort: false, cohortCount: cohortKeys.length },
     };
   }
 
-  const series: Array<Record<string, unknown>> = [];
-  const legendData: string[] = [];
-  for (const key of cohortKeys) {
-    const { inputMode, scoringVersion } = parseCohortKey(key);
-    const label = cohortDisplayLabel(inputMode, scoringVersion);
-    const overallName = `${label} 综合分`;
-    legendData.push(overallName);
-    series.push({
-      name: overallName,
-      type: "line",
-      connectNulls,
-      data: timeline.map((p) =>
-        cohortIdentityKey(p.inputMode, p.scoringVersion) === key ? p.overall : null,
-      ),
-    });
-  }
+  const series: Array<Record<string, unknown>> = [...overallSeries];
+  const legendData: string[] = overallSeries.map((item) => item.name);
 
   const dimensionGroupKey = (point: TimelinePoint) =>
     point.inputMode !== null && point.scoringVersion !== null

@@ -922,4 +922,53 @@ describe("growth-data report href + cohort 连线（Astra 定点）", () => {
     assert.equal(allSeriesConnectNullsFalse(opts), true);
     assert.equal((opts._meta as { connectNulls: boolean }).connectNulls, false);
   });
+
+  it("综合分仅连接同模式、同版本、同有效维度集合，且不跨中间异组点", () => {
+    const records = parseGrowthHistoryResponse({
+      user_id: 3,
+      job_id: 1,
+      records: [
+        historyRecord({ session_id: 11, report_id: 11, overall: 70 }),
+        historyRecord({ session_id: 12, report_id: 12, overall: 80,
+          dimensions: baseDims({ job_competence: null }) }),
+        historyRecord({ session_id: 13, report_id: 13, overall: 75 }),
+      ],
+    }).records;
+    const opts = transformTrendToLineOptions(parseGrowthTrendResponse(trendPayload()), records);
+    const overall = (opts.series as Array<{ name: string; data: Array<number | null> }>)
+      .filter((series) => series.name.includes("综合分"))
+      .map((series) => series.data);
+    assert.deepEqual(overall, [[70, null, 75], [null, 80, null]]);
+    assert.deepEqual(getSeriesDataByName(opts, "专业匹配度"), [68, 68, 68]);
+    assert.equal(allSeriesConnectNullsFalse(opts), true);
+  });
+
+  it("未知模式、未知版本和空有效维度集合的综合分只显示独立散点", () => {
+    const records = parseGrowthHistoryResponse({
+      user_id: 3,
+      job_id: 1,
+      records: [
+        historyRecord({ session_id: 11, report_id: 11, input_mode: null, overall: 70 }),
+        historyRecord({ session_id: 12, report_id: 12, input_mode: null, overall: 71 }),
+        historyRecord({ session_id: 13, report_id: 13, scoring_version: null, overall: 72 }),
+        historyRecord({ session_id: 14, report_id: 14, scoring_version: null, overall: 73 }),
+        historyRecord({ session_id: 15, report_id: 15, overall: 74,
+          dimensions: baseDims({ professional_match: null, logic_structure: null, job_competence: null }) }),
+        historyRecord({ session_id: 16, report_id: 16, overall: 75,
+          dimensions: baseDims({ professional_match: null, logic_structure: null, job_competence: null }) }),
+        historyRecord({ session_id: 17, report_id: 17, overall: null }),
+      ],
+    }).records;
+    const opts = transformTrendToLineOptions(parseGrowthTrendResponse(trendPayload()), records);
+    const overall = (opts.series as Array<{ name: string; data: Array<number | null> }>)
+      .filter((series) => series.name.includes("综合分"));
+    assert.equal(overall.length, records.length);
+    for (const series of overall) {
+      assert.ok(series.data.filter((value) => value !== null).length <= 1);
+      assert.equal(series.data.includes(0), false);
+    }
+    assert.deepEqual(overall.flatMap((series) => series.data.filter((value) => value !== null)),
+      [70, 71, 72, 73, 74, 75]);
+    assert.equal(allSeriesConnectNullsFalse(opts), true);
+  });
 });
