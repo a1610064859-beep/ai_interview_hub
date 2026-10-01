@@ -3,6 +3,7 @@
 import csv
 import io
 from pathlib import Path
+import zipfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path as ApiPath, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -94,6 +95,30 @@ def get_student_resume(student_id: int = ApiPath(..., ge=1)):
             filename=user.resume_original_name or file_path.name,
             content_disposition_type="inline" if is_pdf else "attachment",
         )
+
+
+@router.get("/{student_id}/photo")
+def get_student_photo(student_id: int = ApiPath(..., ge=1)):
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.id == student_id, User.role == "student").first()
+        if user is None or not user.resume_storage_key:
+            raise HTTPException(status_code=404, detail={"code": "PHOTO_NOT_FOUND", "message": "照片不存在"})
+        directory = Path(settings.resume_upload_dir).resolve()
+        file_path = (directory / user.resume_storage_key).resolve()
+        if not file_path.is_relative_to(directory) or not file_path.is_file():
+            raise HTTPException(status_code=404, detail={"code": "PHOTO_NOT_FOUND", "message": "照片不存在"})
+        if file_path.suffix.lower() == ".docx":
+            try:
+                raw_bytes = file_path.read_bytes()
+                with zipfile.ZipFile(io.BytesIO(raw_bytes)) as archive:
+                    for name in archive.namelist():
+                        if name.startswith("word/media/") and name.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                            data = archive.read(name)
+                            mime = "image/jpeg" if name.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                            return Response(content=data, media_type=mime, headers={"Cache-Control": "public, max-age=86400"})
+            except Exception:
+                pass
+        raise HTTPException(status_code=404, detail={"code": "PHOTO_NOT_FOUND", "message": "照片不存在"})
 
 
 @router.get("/{student_id}/resume/text")

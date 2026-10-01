@@ -287,6 +287,36 @@ function parseCandidatesPayload(payload: unknown): CandidatesPayload {
   };
 }
 
+function CandidateAvatar({
+  userId,
+  nameMasked,
+}: {
+  userId: number;
+  nameMasked: string | null;
+}) {
+  const [photoError, setPhotoError] = useState(false);
+
+  useEffect(() => {
+    setPhotoError(false);
+  }, [userId]);
+
+  return (
+    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#2f6fed]/60 bg-[#0c1730] text-xs font-semibold text-[#7eb6ff] shadow-inner">
+      {!photoError ? (
+        <img
+          src={`/api/recruiter/students/${userId}/photo`}
+          alt={nameMasked ? `${nameMasked}头像` : "头像"}
+          className="h-full w-full object-cover object-top"
+          onError={() => setPhotoError(true)}
+        />
+      ) : null}
+      {photoError ? (
+        <span>{nameMasked ? nameMasked.slice(-2) : "头像"}</span>
+      ) : null}
+    </div>
+  );
+}
+
 export default function RecruiterPage() {
   const { theme } = useAppTheme();
   const [jobs, setJobs] = useState<JobOption[]>([]);
@@ -317,6 +347,7 @@ export default function RecruiterPage() {
   const [resumeText, setResumeText] = useState<{ studentId: number; paragraphs: string[]; images: string[] } | null>(null);
   const [resumeTextLoading, setResumeTextLoading] = useState(false);
   const [resumeTextError, setResumeTextError] = useState<string | null>(null);
+  const [photoFailedId, setPhotoFailedId] = useState<number | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [resumeFiles, setResumeFiles] = useState<File[]>([]);
   const [importBusy, setImportBusy] = useState(false);
@@ -635,6 +666,7 @@ export default function RecruiterPage() {
     && WEIGHT_KEYS.some((key) => weightDraft[key] !== savedWeightPercentages[key]);
 
   useEffect(() => {
+    setPhotoFailedId(null);
     if (profileId === null) {
       setProfile(null);
       return;
@@ -817,6 +849,13 @@ export default function RecruiterPage() {
   const resumeImages = profile?.id === resumeText?.studentId ? resumeText?.images ?? [] : [];
   const resumeRequirements = extractResumeRequirements(resumeParagraphs);
   const resumeDetails = extractResumeDetails(resumeParagraphs);
+  const candidatePhotoUrl = useMemo(() => {
+    if (resumeImages[0]) return resumeImages[0];
+    if (profile?.has_resume && profile.id && photoFailedId !== profile.id) {
+      return `/api/recruiter/students/${profile.id}/photo`;
+    }
+    return null;
+  }, [resumeImages, profile?.has_resume, profile?.id, photoFailedId]);
 
   return (
     <main className="min-h-dvh bg-[#050912] px-3 py-4 text-[#d7e3f7] sm:px-6 sm:py-6 lg:px-8">
@@ -1102,9 +1141,7 @@ export default function RecruiterPage() {
                     }`}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#2f6fed]/60 bg-[#0c1730] text-xs font-semibold text-[#7eb6ff] shadow-inner">
-                        {c.name_masked ? c.name_masked.slice(-2) : "头像"}
-                      </div>
+                      <CandidateAvatar userId={c.user_id} nameMasked={c.name_masked} />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
@@ -1161,8 +1198,15 @@ export default function RecruiterPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-3.5">
                     <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#2f6fed] bg-[#050912] shadow-[0_0_14px_rgba(47,111,237,0.35)]">
-                      {resumeImages[0] ? (
-                        <img src={resumeImages[0]} alt="候选人头像" className="h-full w-full object-cover object-top" />
+                      {candidatePhotoUrl ? (
+                        <img
+                          src={candidatePhotoUrl}
+                          alt="候选人头像"
+                          className="h-full w-full object-cover object-top"
+                          onError={() => {
+                            if (profile?.id) setPhotoFailedId(profile.id);
+                          }}
+                        />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#1a2d5a] to-[#0c1730] text-base font-bold text-[#7eb6ff]">
                           {profile.name_masked ? profile.name_masked.slice(-2) : "头像"}
@@ -1181,12 +1225,15 @@ export default function RecruiterPage() {
                   </dl>
                 </div>
                 <figure className="w-40 shrink-0 sm:w-44">
-                  {resumeImages[0] ? (
+                  {candidatePhotoUrl ? (
                     <div className="group relative overflow-hidden rounded-xl border-2 border-[#2f6fed]/70 bg-[#050912] shadow-[0_0_20px_rgba(47,111,237,0.3)]">
                       <img
-                        src={resumeImages[0]}
+                        src={candidatePhotoUrl}
                         alt="简历原件证件照片"
                         className="h-52 w-40 object-cover object-top transition duration-300 group-hover:scale-105 sm:h-56 sm:w-44"
+                        onError={() => {
+                          if (profile?.id) setPhotoFailedId(profile.id);
+                        }}
                       />
                       <span className="absolute bottom-2 right-2 rounded-md bg-[#050912]/80 px-1.5 py-0.5 text-[10px] text-[#7eb6ff] backdrop-blur-sm">
                         简历照片

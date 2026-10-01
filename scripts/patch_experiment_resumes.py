@@ -117,6 +117,37 @@ OTHER_REQUIREMENTS_POOL = [
     "其他要求：期望有接触前沿整车电子电气架构和智驾测试工具链的实践机会。",
 ]
 
+SCHOOL_INFO_BY_EDU = {
+    "中职": [
+        ("上海市现代职业技术学校", "中职/技校", 18, "上海嘉定", "上海市嘉定区安亭镇汽车城"),
+        ("江苏省常州技师学院", "中职/技校", 19, "江苏常州", "常州市新北区汉江路"),
+        ("苏州市中等职业技术学校", "中职/技校", 18, "江苏苏州", "苏州市昆山市花桥国际商务城"),
+    ],
+    "高职/大专": [
+        ("常州机电职业技术学院", "高职/大专", 21, "江苏常州", "常州市武进区大学城"),
+        ("上海交通职业技术学院", "高职/大专", 22, "上海浦东", "上海市浦东新区张江高科"),
+        ("南京交通职业技术学院", "高职/大专", 21, "江苏南京", "南京市江宁区大学城"),
+        ("无锡职业技术学院", "高职/大专", 22, "江苏无锡", "无锡市滨湖区"),
+    ],
+    "本科": [
+        ("同济大学", "C9/985", 22, "上海杨浦", "上海市嘉定区同济大学嘉定校区"),
+        ("上海工程技术大学", "普通本科", 22, "上海松江", "上海市松江区大学城"),
+        ("吉林大学", "C9/985", 23, "吉林长春", "上海市嘉定区安亭汽车城"),
+        ("武汉理工大学", "211/双一流", 22, "湖北武汉", "上海市浦东新区金桥开发区"),
+        ("南京航空航天大学", "211/双一流", 23, "江苏南京", "上海市嘉定区安亭汽车城"),
+    ],
+    "硕士": [
+        ("同济大学", "C9/985", 25, "江苏苏州", "上海市嘉定区同济大学嘉定校区"),
+        ("清华大学", "C9/985", 25, "北京海淀", "上海市浦东新区张江高科"),
+        ("上海交通大学", "C9/985", 24, "上海闵行", "上海市闵行区交大东区"),
+        ("北京理工大学", "211/双一流", 25, "山东济南", "上海市嘉定区安亭汽车城"),
+    ],
+    "博士": [
+        ("清华大学", "C9/985", 28, "湖北武汉", "上海市浦东新区张江人工智能岛"),
+        ("同济大学", "C9/985", 27, "江苏无锡", "上海市嘉定区同济大学嘉定校区"),
+    ],
+}
+
 
 def get_user_education_map() -> dict[str, str]:
     if not DB_PATH.exists():
@@ -134,7 +165,7 @@ def get_user_education_map() -> dict[str, str]:
     return edu_map, key_map
 
 
-def patch_docx(docx_bytes: bytes, sno: str, edu: str) -> bytes:
+def patch_docx(docx_bytes: bytes, sno: str, edu: str) -> tuple[bytes, str]:
     rng = random.Random(f"EXP-RAND-{sno}")
     overtime_will = rng.choice(OVERTIME_WILLINGNESS_POOL)
     overtime_comp = rng.choice(OVERTIME_COMPENSATION_POOL)
@@ -142,6 +173,10 @@ def patch_docx(docx_bytes: bytes, sno: str, edu: str) -> bytes:
     salary = rng.choice(salary_pool)
     loc = rng.choice(LOCATION_POOL)
     other = rng.choice(OTHER_REQUIREMENTS_POOL)
+
+    info_list = SCHOOL_INFO_BY_EDU.get(edu, SCHOOL_INFO_BY_EDU["高职/大专"])
+    idx = int(sno.split("-")[-1]) if sno.startswith("EXP260925A-") and sno.split("-")[-1].isdigit() else abs(hash(sno))
+    school, tier, age, native, residence = info_list[idx % len(info_list)]
 
     in_buf = io.BytesIO(docx_bytes)
     out_buf = io.BytesIO()
@@ -157,6 +192,16 @@ def patch_docx(docx_bytes: bytes, sno: str, edu: str) -> bytes:
                     if first_p_end != -1:
                         first_p_end += len("</w:p>")
                         xml = xml[:first_p_end] + DRAWING_P + xml[first_p_end:]
+
+                # Insert school and location info after 基本信息 if not present
+                if "毕业院校" not in xml:
+                    info_match = re.search(r"<w:p[ >](?:(?!<w:p[ >]).)*?<w:t>基本信息</w:t>.*?</w:p>", xml)
+                    if info_match:
+                        school_xml = (
+                            f"<w:p><w:r><w:t>毕业院校：{school}    年龄：{age}岁</w:t></w:r></w:p>"
+                            f"<w:p><w:r><w:t>籍贯：{native}    现居住地：{residence}</w:t></w:r></w:p>"
+                        )
+                        xml = xml[: info_match.end()] + school_xml + xml[info_match.end():]
 
                 # Replace or append求职要求
                 req_heading_pattern = r"<w:p[ >][^<]*<w:r[ >][^<]*(?:<w:rPr>.*?</w:rPr>)?[^<]*<w:t>求职要求</w:t>.*?</w:p>"
@@ -214,7 +259,7 @@ def patch_docx(docx_bytes: bytes, sno: str, edu: str) -> bytes:
         # write photo
         zout.writestr("word/media/image1.jpg", PHOTO_BYTES)
 
-    return out_buf.getvalue()
+    return out_buf.getvalue(), tier
 
 
 def main():
@@ -223,6 +268,7 @@ def main():
 
     RESUMES_DIR.mkdir(parents=True, exist_ok=True)
     zip_files: dict[str, bytes] = {}
+    tier_updates: list[tuple[str, str]] = []
 
     for idx in range(1, 51):
         sno = f"EXP260925A-{idx:03d}"
@@ -234,7 +280,8 @@ def main():
 
         raw = file_path.read_bytes()
         edu = edu_map.get(sno, "高职/大专")
-        patched = patch_docx(raw, sno, edu)
+        patched, tier = patch_docx(raw, sno, edu)
+        tier_updates.append((tier, sno))
 
         # 1. Write back to data/experiment_resumes/
         file_path.write_bytes(patched)
@@ -250,7 +297,16 @@ def main():
         for fname, data in sorted(zip_files.items()):
             zout.writestr(fname, data)
 
-    print(f"Successfully patched {len(zip_files)} resumes with photos and randomized preferences!")
+    # 4. Update school_tier in interview.db
+    if DB_PATH.exists() and tier_updates:
+        con = sqlite3.connect(DB_PATH)
+        cur = con.cursor()
+        cur.executemany("UPDATE users SET school_tier = ? WHERE student_no = ?", tier_updates)
+        con.commit()
+        con.close()
+        print(f"Updated school_tier for {len(tier_updates)} students in DB.")
+
+    print(f"Successfully patched {len(zip_files)} resumes with photos, school info, and preferences!")
     print(f"Updated {ZIP_PATH} ({ZIP_PATH.stat().st_size} bytes).")
 
 

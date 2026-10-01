@@ -176,3 +176,38 @@ def test_existing_sqlite_students_survive_schema_upgrade(tmp_path):
     with legacy.connect() as conn:
         row = conn.execute(text("SELECT id, name_masked, student_no, education_level FROM users WHERE id=3")).one()
         assert tuple(row) == (3, "王*明", None, None)
+
+
+def test_student_photo_endpoint_returns_image_or_404():
+    # 404 for nonexistent student
+    assert client.get("/api/recruiter/students/999/photo").status_code == 404
+
+    # Student without resume
+    data = csv_file(["S2001", "张*华", "车辆工程", "大三", "本科", "", "", ""])
+    assert client.post("/api/recruiter/students/import", files={"csv_file": ("students.csv", data)}).status_code == 200
+    s_id = client.get("/api/students").json()["students"][0]["id"]
+    assert client.get(f"/api/recruiter/students/{s_id}/photo").status_code == 404
+
+    # Student with docx containing photo
+    photo_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as arc:
+        arc.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>个人简历</w:t></w:r></w:p></w:body></w:document>')
+        arc.writestr("word/media/image1.jpg", photo_bytes)
+    docx_with_photo = buf.getvalue()
+
+    photo_csv = csv_file(["S2002", "李*雷", "汽车电子", "大四", "本科", "", "", "photo_resume.docx"])
+    imported = client.post(
+        "/api/recruiter/students/import",
+        files=[
+            ("csv_file", ("students.csv", photo_csv, "text/csv")),
+            ("resumes", ("photo_resume.docx", docx_with_photo, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+        ],
+    )
+    assert imported.status_code == 200
+    s_photo_id = next(s["id"] for s in client.get("/api/students").json()["students"] if s["student_no"] == "S2002")
+    photo_resp = client.get(f"/api/recruiter/students/{s_photo_id}/photo")
+    assert photo_resp.status_code == 200
+    assert photo_resp.headers["content-type"] == "image/jpeg"
+    assert photo_resp.content == photo_bytes
+
