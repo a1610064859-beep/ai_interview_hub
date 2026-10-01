@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppTheme } from "../../components/theme-provider";
 import { sortCandidatesByEducation, sortCandidatesBySchoolTier } from "../../lib/candidate-sort";
+import { extractResumeDetails, extractResumeRequirements } from "../../lib/resume-data";
 
 import {
   DIMENSION_LABEL_MAP,
@@ -306,7 +307,7 @@ export default function RecruiterPage() {
   const [profileId, setProfileId] = useState<number | null>(null);
   const [profile, setProfile] = useState<StudentProfile | null>(null);
   const [profileRevision, setProfileRevision] = useState(0);
-  const [resumeText, setResumeText] = useState<{ studentId: number; paragraphs: string[] } | null>(null);
+  const [resumeText, setResumeText] = useState<{ studentId: number; paragraphs: string[]; images: string[] } | null>(null);
   const [resumeTextLoading, setResumeTextLoading] = useState(false);
   const [resumeTextError, setResumeTextError] = useState<string | null>(null);
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -509,6 +510,7 @@ export default function RecruiterPage() {
       const payload = parseCandidatesPayload(await resp.json());
       setList(payload);
       setSelectedUserId(payload.candidates[0]?.user_id ?? null);
+      if (payload.candidates[0]) setProfileId(payload.candidates[0].user_id);
     } catch (e) {
       setList(null);
       setError(e instanceof Error ? e.message : "加载候选失败");
@@ -615,13 +617,16 @@ export default function RecruiterPage() {
     setResumeTextLoading(true);
     (async () => {
       try {
-        const response = await fetch(`/api/recruiter/students/${studentId}/resume/text`);
+        const response = await fetch(`/api/recruiter/students/${studentId}/resume/text?include_images=true`);
         if (!response.ok) throw new Error(await readApiError(response));
         const raw: unknown = await response.json();
         if (!isRecord(raw) || raw.student_id !== studentId || !Array.isArray(raw.paragraphs) || raw.paragraphs.some((item) => typeof item !== "string")) {
           throw new Error("简历内容响应非法");
         }
-        if (!cancelled) setResumeText({ studentId, paragraphs: raw.paragraphs as string[] });
+        const images = Array.isArray(raw.images) ? raw.images.flatMap((item) =>
+          isRecord(item) && typeof item.data_url === "string" && /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/.test(item.data_url) ? [item.data_url] : [],
+        ) : [];
+        if (!cancelled) setResumeText({ studentId, paragraphs: raw.paragraphs as string[], images });
       } catch (e) {
         if (!cancelled) setResumeTextError(e instanceof Error ? e.message : "读取简历内容失败");
       } finally {
@@ -743,6 +748,11 @@ export default function RecruiterPage() {
     return null;
   })();
 
+  const resumeParagraphs = profile?.id === resumeText?.studentId ? resumeText?.paragraphs ?? [] : [];
+  const resumeImages = profile?.id === resumeText?.studentId ? resumeText?.images ?? [] : [];
+  const resumeRequirements = extractResumeRequirements(resumeParagraphs);
+  const resumeDetails = extractResumeDetails(resumeParagraphs);
+
   return (
     <main className="min-h-dvh bg-[#050912] px-3 py-4 text-[#d7e3f7] sm:px-6 sm:py-6 lg:px-8">
       <header className="mb-6 flex min-w-0 flex-wrap items-end justify-between gap-3">
@@ -761,8 +771,8 @@ export default function RecruiterPage() {
         </p>
       ) : null}
 
-      <section className="mb-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
-        <h2 className="text-lg text-white">学生档案与名单导入</h2>
+      <details className="mb-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
+        <summary className="cursor-pointer text-sm font-medium text-white">学生档案与名单导入</summary>
         <p className="mt-1 text-sm text-[#9fb4d4]">
           下载固定 CSV 模板，填写脱敏姓名、学生编号和学校档次（C9/985、211/双一流、普通本科、高职/大专、中职/技校或其他/未知）；学校档次请按学校实际情况填写，不会根据学历推断。简历文件名填写完整文件名。请将 CSV 引用的 .docx 或 .pdf 简历集中放入一个文件夹，再选择该文件夹；文件夹内只放 CSV 引用的简历，避免多传造成不匹配。重复编号更新档案，未完成训练的学生不会进入候选榜。
         </p>
@@ -787,7 +797,7 @@ export default function RecruiterPage() {
           <div className="rounded-xl border border-[#2f6fed]/30 bg-[#050912] p-4">
             <label className="block text-sm text-[#9fb4d4]">
               查看学生档案（共 {students.length} 人）
-              <select className="mt-2 w-full rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={profileId ?? ""} onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : null)}>
+              <select className="mt-2 w-full rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={profileId ?? ""} onChange={(e) => { const id = e.target.value ? Number(e.target.value) : null; setProfileId(id); setSelectedUserId(id); }}>
                 <option value="">请选择学生</option>
                 {students.map((student) => (
                   <option key={student.id} value={student.id}>
@@ -799,11 +809,10 @@ export default function RecruiterPage() {
             <p className="mt-3 text-xs text-[#9fb4d4]">候选榜继续只使用同岗位、同评分口径的真实面试报告；导入的档案不会生成虚构分数。</p>
           </div>
         </div>
-      </section>
+      </details>
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(280px,320px)_minmax(0,1fr)_minmax(280px,320px)]">
-        <section className="rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
-          <h2 className="text-lg text-white">粘贴 JD 新建岗位</h2>
+        <details className="mb-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
+          <summary className="cursor-pointer text-sm font-medium text-white">粘贴 JD 新建岗位</summary>
           <p className="mt-2 text-xs leading-5 text-[#9fb4d4]">
             解析后会创建岗位并写入题库；系统从 JD 提取岗位类别和名称。评分仍使用四个固定维度，新岗位默认等权。
           </p>
@@ -888,14 +897,15 @@ export default function RecruiterPage() {
               </div>
             </div>
           ) : null}
-        </section>
+        </details>
 
-        <section className="rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
+      <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(230px,0.75fr)_minmax(0,1.65fr)] xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.8fr)_minmax(260px,0.8fr)]">
+        <section className="min-w-0 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg text-white">候选列表</h2>
-            <label className="flex items-center gap-2 text-sm text-[#9fb4d4]">
+            <label className="flex w-full flex-col items-start gap-2 text-sm text-[#9fb4d4]">
               排序
-              <select className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
+              <select className="w-full min-w-0 rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
                 <option value="score">岗位加权分</option>
                 <option value="school_desc">学校档次：高到低</option>
                 <option value="school_asc">学校档次：低到高</option>
@@ -903,10 +913,10 @@ export default function RecruiterPage() {
                 <option value="education_asc">学历：低到高</option>
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm text-[#9fb4d4]">
+            <label className="flex w-full flex-col items-start gap-2 text-sm text-[#9fb4d4]">
               评分口径
               <select
-                className="rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
+                className="w-full min-w-0 rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white"
                 value={selectedCohortKey}
                 onChange={(e) => setSelectedCohortKey(e.target.value)}
                 disabled={!discover || discover.available_cohorts.length === 0}
@@ -923,8 +933,9 @@ export default function RecruiterPage() {
           <p className="mb-3 text-xs text-[#7eb6ff]">
             企业加权（岗位 dims_json）· eligibility={discover?.eligibility ?? "—"}
           </p>
-          <div className="mb-4 rounded-xl border border-[#2f6fed]/40 bg-[#050912] p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <details className="mb-4 rounded-xl border border-[#2f6fed]/40 bg-[#050912] p-4">
+            <summary className="cursor-pointer text-sm font-medium text-white">人才需求权重 · 展开调整</summary>
+            <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-white">人才需求权重</h3>
                 <p className="mt-1 max-w-3xl text-xs leading-5 text-[#9fb4d4]">
@@ -937,7 +948,7 @@ export default function RecruiterPage() {
             </div>
             {weightDraft ? (
               <>
-                <div className="mt-3 grid gap-x-5 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="mt-3 grid gap-x-5 gap-y-3 grid-cols-1">
                   {WEIGHT_KEYS.map((key) => (
                     <label key={key} className="block text-xs text-[#d7e3f7]">
                       <span className="mb-1 flex items-center justify-between gap-2">
@@ -975,7 +986,7 @@ export default function RecruiterPage() {
             </p>
             {weightMessage ? <p className="mt-2 text-xs text-emerald-300" role="status">{weightMessage}</p> : null}
             {weightError ? <p className="mt-2 text-xs text-[#ffd0a8]" role="alert">权重保存失败：{weightError}</p> : null}
-          </div>
+          </details>
           {emptyHint ? (
             <p className="rounded-xl border border-[#2f6fed]/40 bg-[#050912] px-4 py-6 text-sm text-[#9fb4d4]">
               {emptyHint}
@@ -1029,9 +1040,66 @@ export default function RecruiterPage() {
             </ul>
           )}
         </section>
-
+        <section aria-label="简历详情" className="min-w-0 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-5 shadow-[0_0_24px_rgba(47,111,237,0.2)] sm:p-6">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-[#2f6fed]/30 pb-4">
+            <div><p className="text-xs tracking-widest text-[#7eb6ff]">RESUME</p><h2 className="mt-1 text-xl font-semibold text-white">候选人简历</h2></div>
+            <label className="flex min-w-0 flex-col gap-1 text-xs text-[#9fb4d4]">查看学生简历
+              <select className="max-w-full rounded-lg border border-[#2f6fed]/50 bg-[#050912] px-3 py-2 text-sm text-white" value={profileId ?? ""} onChange={(e) => { const id = e.target.value ? Number(e.target.value) : null; setProfileId(id); setSelectedUserId(id); }}>
+                <option value="">请选择学生</option>
+                {students.map((student) => <option key={student.id} value={student.id}>{student.name_masked ?? "未填写姓名"} · {student.student_no ?? `#${student.id}`}</option>)}
+              </select>
+            </label>
+            {profile?.has_resume && <a href={`/api/recruiter/students/${profile.id}/resume`} target={profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "_blank" : undefined} rel="noreferrer" className="rounded-lg border border-[#2f6fed]/60 px-3 py-2 text-sm text-[#7eb6ff] hover:border-[#7eb6ff]">查看 / 下载原件</a>}
+          </div>
+          {profile ? (
+            <>
+              <div className="flex flex-col-reverse justify-between gap-5 sm:flex-row">
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-2xl font-semibold text-white">{profile.name_masked ?? "未填写姓名"}</h3>
+                  <p className="mt-2 text-sm text-[#9fb4d4]">学生编号 {profile.student_no ?? `#${profile.id}`}</p>
+                  <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-4 text-sm">
+                    {[{ label: "专业", value: profile.major }, { label: "年级", value: profile.grade }, { label: "学历", value: profile.education_level }, { label: "学校档次", value: profile.school_tier }, ...resumeDetails].map(({ label, value }) => (
+                      <div key={label}><dt className="text-xs text-[#9fb4d4]">{label}</dt><dd className="mt-1 break-words font-medium text-white">{value ?? "未填写"}</dd></div>
+                    ))}
+                  </dl>
+                </div>
+                <figure className="w-28 shrink-0">
+                  {resumeImages[0] ? <img src={resumeImages[0]} alt="简历原件中的照片或图片" className="h-36 w-28 rounded-xl border border-[#2f6fed]/40 bg-[#050912] object-contain" /> : <div className="flex h-36 w-28 items-center justify-center rounded-xl border border-dashed border-[#2f6fed]/40 bg-[#050912] px-3 text-center text-xs leading-6 text-[#9fb4d4]">{resumeTextLoading ? "正在读取照片…" : profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "照片见下方 PDF 原件" : "简历未提供可显示的照片"}</div>}
+                  <figcaption className="mt-2 text-center text-xs text-[#9fb4d4]">简历照片 / 原件图片</figcaption>
+                </figure>
+              </div>
+              {(profile.internship_experience || profile.awards) && <dl className="mt-6 space-y-4 border-t border-[#2f6fed]/30 pt-5 text-sm">
+                {profile.internship_experience && <div><dt className="font-medium text-[#7eb6ff]">实习经历</dt><dd className="mt-2 whitespace-pre-wrap break-words leading-7 text-white">{profile.internship_experience}</dd></div>}
+                {profile.awards && <div><dt className="font-medium text-[#7eb6ff]">获奖情况</dt><dd className="mt-2 whitespace-pre-wrap break-words leading-7 text-white">{profile.awards}</dd></div>}
+              </dl>}
+              <div className="mt-6 border-t border-[#2f6fed]/30 pt-5" aria-live="polite">
+                <h3 className="text-base font-semibold text-white">个人履历</h3>
+                {profile.has_resume ? (
+                  profile.resume_filename?.toLowerCase().endsWith(".pdf") ? <>
+                    <p className="mt-2 text-xs text-[#9fb4d4]">PDF 原件保留照片与排版，可在下方直接阅读。</p>
+                    <iframe title={`${profile.name_masked ?? "候选人"}的 PDF 简历`} src={`/api/recruiter/students/${profile.id}/resume#view=FitH`} className="mt-4 h-[75vh] min-h-[600px] w-full rounded-xl border border-[#2f6fed]/30 bg-white" />
+                  </> : resumeTextLoading ? <p className="mt-4 text-sm text-[#9fb4d4]">正在读取简历正文与照片…</p> : resumeTextError ? <p className="mt-4 text-sm text-[#ffb7a8]" role="alert">{resumeTextError}。可以查看 / 下载原件。</p> : resumeParagraphs.length > 0 ? <>
+                    <div className="mt-4 min-h-80 space-y-4 rounded-xl border border-[#2f6fed]/20 bg-[#050912]/70 p-5 text-base leading-8 text-white sm:p-6">
+                      {resumeParagraphs.map((paragraph, index) => <p key={`${profile.id}-${index}`} className="whitespace-pre-wrap break-words">{paragraph}</p>)}
+                    </div>
+                    {resumeImages.length > 1 && <div className="mt-5"><h4 className="text-sm text-[#9fb4d4]">简历内其他图片</h4><div className="mt-3 flex flex-wrap gap-3">{resumeImages.slice(1).map((image, index) => <img key={index} src={image} alt={`简历内图片 ${index + 2}`} className="max-h-60 max-w-full rounded-lg border border-[#2f6fed]/30 object-contain" />)}</div></div>}
+                  </> : <p className="mt-4 text-sm text-[#9fb4d4]">简历中没有可读取的正文文字，请查看原件。</p>
+                ) : <div className="mt-4 rounded-xl border border-dashed border-[#2f6fed]/40 px-5 py-12 text-center text-sm text-[#9fb4d4]">该学生尚未上传简历，可在“学生档案与名单导入”中导入。</div>}
+              </div>
+            </>
+          ) : <div className="flex min-h-96 items-center justify-center rounded-xl border border-dashed border-[#2f6fed]/40 p-8 text-center text-sm leading-7 text-[#9fb4d4]">{profileId === null ? "从左侧候选列表选择学生，或展开名单导入选择档案。" : "正在读取学生档案…"}</div>}
+        </section>
+        <aside className="min-w-0 space-y-4 lg:col-span-2 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 xl:col-span-1 xl:block xl:space-y-4">
+          <section aria-label="求职要求" className="rounded-2xl border border-[#ff8a2a]/40 bg-[#0c1730]/90 p-4">
+            <p className="text-xs tracking-widest text-[#ff8a2a]">PREFERENCES</p>
+            <h2 className="mt-1 text-lg font-semibold text-white">求职要求</h2>
+            <p className="mt-2 text-xs leading-5 text-[#9fb4d4]">保留简历原话，面试前核对双方期望。</p>
+            {profile ? profile.resume_filename?.toLowerCase().endsWith(".pdf") ? <p className="mt-4 text-sm leading-6 text-[#9fb4d4]">请在中间 PDF 原件中核对加班意愿、加班费和薪资要求；当前未读取 PDF 文字。</p> : resumeTextLoading ? <p className="mt-4 text-sm text-[#9fb4d4]">正在读取求职要求…</p> : resumeTextError ? <p className="mt-4 text-sm text-[#ffd0a8]">简历暂时无法读取，请核对原件。</p> : <dl className="mt-4 space-y-3">
+              {resumeRequirements.map(({ label, quotes }) => <div key={label} className="rounded-xl border border-[#2f6fed]/30 bg-[#050912]/60 p-3"><dt className="text-xs font-medium text-[#ff8a2a]">{label}</dt><dd className="mt-2 space-y-2 text-sm leading-6 text-white">{quotes.length ? quotes.map((quote, index) => <p key={index} className="whitespace-pre-wrap break-words">{quote}</p>) : <span className="text-[#9fb4d4]">未注明</span>}</dd></div>)}
+            </dl> : <p className="mt-4 text-sm text-[#9fb4d4]">选择学生后查看简历中的求职要求。</p>}
+          </section>
         <section className="rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
-          <h2 className="text-lg text-white">雷达预览</h2>
+          <h2 className="text-lg text-white">面试能力评分</h2>
           {selected ? (
             <>
               <p className="mt-2 text-sm text-[#9fb4d4]">
@@ -1058,52 +1126,8 @@ export default function RecruiterPage() {
           ) : (
             <p className="mt-6 text-sm text-[#9fb4d4]">选择候选人后显示四维雷达；null 维不补零。</p>
           )}
-          <div className="mt-5 border-t border-[#2f6fed]/40 pt-4">
-            <h3 className="text-base text-white">学生信息</h3>
-            {profile ? (
-              <dl className="mt-3 space-y-3 text-sm">
-                <div><dt className="text-[#9fb4d4]">姓名 / 学生编号</dt><dd className="text-white">{profile.name_masked ?? "未填写"} / {profile.student_no ?? `#${profile.id}`}</dd></div>
-                <div><dt className="text-[#9fb4d4]">专业 / 年级 / 学历</dt><dd className="text-white">{profile.major ?? "未填写"} / {profile.grade ?? "未填写"} / {profile.education_level ?? "未填写"}</dd></div>
-                <div><dt className="text-[#9fb4d4]">学校档次</dt><dd className="text-white">{profile.school_tier ?? "未填写"}</dd></div>
-                <div><dt className="text-[#9fb4d4]">实习经历</dt><dd className="whitespace-pre-wrap text-white">{profile.internship_experience ?? "未填写"}</dd></div>
-                <div><dt className="text-[#9fb4d4]">获奖情况</dt><dd className="whitespace-pre-wrap text-white">{profile.awards ?? "未填写"}</dd></div>
-                <div>
-                  <dt className="text-[#9fb4d4]">简历</dt>
-                  <dd>
-                    {profile.has_resume ? (
-                      <>
-                        <a
-                          href={`/api/recruiter/students/${profile.id}/resume`}
-                          target={profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "_blank" : undefined}
-                          rel="noopener noreferrer"
-                          className="text-[#7eb6ff] underline"
-                        >
-                          {profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "浏览器预览 PDF" : "下载 Word 原件"} · {profile.resume_filename ?? "简历"}
-                        </a>
-                        {profile.resume_filename?.toLowerCase().endsWith(".docx") && (
-                          <div className="mt-3 rounded-xl border border-[#2f6fed]/40 bg-[#050912]/80 p-3" aria-live="polite">
-                            <h4 className="text-sm font-semibold text-white">简历文字内容（网页读取）</h4>
-                            {resumeTextLoading ? (
-                              <p className="mt-2 text-sm text-[#9fb4d4]">正在读取 DOCX 正文…</p>
-                            ) : resumeTextError ? (
-                              <p className="mt-2 text-sm text-[#ffb7a8]">{resumeTextError}</p>
-                            ) : resumeText?.studentId === profile.id ? (
-                              resumeText.paragraphs.length > 0 ? (
-                                <div className="mt-2 max-h-80 space-y-2 overflow-y-auto pr-1 text-sm leading-6 text-white">
-                                  {resumeText.paragraphs.map((paragraph, index) => <p key={`${index}-${paragraph}`}>{paragraph}</p>)}
-                                </div>
-                              ) : <p className="mt-2 text-sm text-[#9fb4d4]">DOCX 中没有可读取的正文文字。</p>
-                            ) : null}
-                          </div>
-                        )}
-                      </>
-                    ) : <span className="text-white">未上传</span>}
-                  </dd>
-                </div>
-              </dl>
-            ) : <p className="mt-2 text-sm text-[#9fb4d4]">{profileId === null ? "从名单或候选列表选择学生。" : "正在读取档案…"}</p>}
-          </div>
         </section>
+        </aside>
       </div>
 
       <section className="mt-4 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">

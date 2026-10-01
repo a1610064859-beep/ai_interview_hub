@@ -20,6 +20,7 @@ from server.services.student_roster import (
     ResumeReadError,
     RosterImportError,
     extract_docx_paragraphs,
+    extract_docx_images,
     import_roster,
     parse_roster_csv,
     student_detail,
@@ -96,7 +97,7 @@ def get_student_resume(student_id: int = ApiPath(..., ge=1)):
 
 
 @router.get("/{student_id}/resume/text")
-def get_student_resume_text(student_id: int = ApiPath(..., ge=1)):
+def get_student_resume_text(student_id: int = ApiPath(..., ge=1), include_images: bool = False):
     with SessionLocal() as db:
         user = db.query(User).filter(User.id == student_id, User.role == "student").first()
         if user is None or not user.resume_storage_key:
@@ -111,15 +112,19 @@ def get_student_resume_text(student_id: int = ApiPath(..., ge=1)):
                 detail={"code": "RESUME_FORMAT_UNSUPPORTED", "message": "网页文字读取目前仅支持 DOCX 格式"},
             )
         try:
-            paragraphs = extract_docx_paragraphs(file_path.read_bytes())
+            resume_data = file_path.read_bytes()
+            paragraphs = extract_docx_paragraphs(resume_data)
         except (ResumeReadError, OSError):
             raise HTTPException(
                 status_code=422,
                 detail={"code": "INVALID_DOCX", "message": "DOCX 简历无法读取，请下载原文件检查"},
             ) from None
-        return {
+        result = {
             "student_id": user.id,
             "filename": user.resume_original_name or file_path.name,
             "paragraphs": paragraphs,
             "text": "\n".join(paragraphs),
         }
+        if include_images:
+            result["images"] = extract_docx_images(resume_data)
+        return result

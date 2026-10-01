@@ -47,6 +47,21 @@ def make_docx(*paragraphs: str) -> bytes:
     return buffer.getvalue()
 
 
+def test_docx_resume_images_preserve_embedded_photo_and_reject_external_images():
+    import base64
+    from server.services.student_roster import extract_docx_images
+
+    photo = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body><a:blip r:embed="rId1"/><a:blip r:embed="rId1"/><a:blip r:embed="rId2"/></w:body></w:document>')
+        archive.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="media/photo.png"/><Relationship Id="rId2" Target="https://example.com/photo.png" TargetMode="External"/></Relationships>')
+        archive.writestr("word/media/photo.png", photo)
+        archive.writestr("word/media/unreferenced.png", photo)
+    assert extract_docx_images(buffer.getvalue()) == [{"data_url": "data:image/png;base64," + base64.b64encode(photo).decode("ascii")}]
+    assert extract_docx_images(make_docx("没有照片")) == []
+
+
 def test_import_csv_roster_and_open_student_resume():
     template = client.get("/api/recruiter/students/template.csv")
     assert template.status_code == 200
@@ -89,6 +104,10 @@ def test_import_csv_roster_and_open_student_resume():
         "paragraphs": ["实习经历：整车测试", "项目经历：读取传感器数据"],
         "text": "实习经历：整车测试\n项目经历：读取传感器数据",
     }
+    with_images = client.get(f"/api/recruiter/students/{student_id}/resume/text?include_images=true")
+    assert with_images.status_code == 200
+    assert with_images.json()["images"] == []
+    assert with_images.json()["paragraphs"] == readable.json()["paragraphs"]
 
     with SessionLocal() as db:
         assert db.query(User).filter(User.role == "student").count() == 2

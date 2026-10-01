@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import re
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 from xml.etree import ElementTree
 
@@ -29,6 +30,55 @@ _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 class ResumeReadError(ValueError):
     pass
+
+
+def extract_docx_images(data: bytes) -> list[dict[str, str]]:
+    """Read body-referenced raster images only; never fetch external relationships."""
+    images: list[dict[str, str]] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            if "word/_rels/document.xml.rels" not in archive.namelist():
+                return images
+            def read_xml(name: str):
+                if archive.getinfo(name).file_size > MAX_DOCX_XML_BYTES:
+                    raise ResumeReadError("简历图片索引超出可读取大小")
+                return ElementTree.fromstring(archive.read(name))
+            document = read_xml("word/document.xml")
+            relationships = read_xml("word/_rels/document.xml.rels")
+            targets = {rel.get("Id"): rel.get("Target", "") for rel in relationships if rel.get("TargetMode") != "External"}
+            relationship_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            seen: set[str] = set()
+            total = 0
+            for element in document.iter():
+                reference = element.get(f"{{{relationship_ns}}}embed") or element.get(f"{{{relationship_ns}}}id")
+                target = targets.get(reference)
+                if not target:
+                    continue
+                path = PurePosixPath("word") / target
+                name = str(path)
+                if path.is_absolute() or ".." in path.parts or not name.startswith("word/media/") or name in seen:
+                    continue
+                seen.add(name)
+                try:
+                    info = archive.getinfo(name)
+                except KeyError:
+                    continue
+                if info.file_size > 3 * 1024 * 1024 or total + info.file_size > 8 * 1024 * 1024:
+                    continue
+                raw = archive.read(name)
+                mime = None
+                if raw.startswith(b"\x89PNG\r\n\x1a\n"): mime = "image/png"
+                elif raw.startswith(b"\xff\xd8\xff"): mime = "image/jpeg"
+                elif raw.startswith((b"GIF87a", b"GIF89a")): mime = "image/gif"
+                elif raw.startswith(b"RIFF") and raw[8:12] == b"WEBP": mime = "image/webp"
+                if mime:
+                    images.append({"data_url": f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")})
+                    total += len(raw)
+                if len(images) >= 6:
+                    break
+    except (zipfile.BadZipFile, KeyError, ElementTree.ParseError, OSError, RuntimeError, ResumeReadError):
+        return []
+    return images
 
 
 def extract_docx_paragraphs(data: bytes) -> list[str]:
