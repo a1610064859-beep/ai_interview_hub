@@ -4,7 +4,14 @@ import * as echarts from "echarts";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppTheme } from "../../components/theme-provider";
-import { sortCandidatesByEducation, sortCandidatesBySchoolTier } from "../../lib/candidate-sort";
+import {
+  type CandidateSortOption,
+  SORT_OPTIONS,
+  filterCandidatesBySchoolNames,
+  schoolNameOptions,
+  sortCandidatesByEducation,
+  sortCandidatesByOverall,
+} from "../../lib/candidate-sort";
 import { extractResumeDetails, extractResumeRequirements } from "../../lib/resume-data";
 
 import {
@@ -314,7 +321,12 @@ export default function RecruiterPage() {
   const [resumeFiles, setResumeFiles] = useState<File[]>([]);
   const [importBusy, setImportBusy] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
-  const [sortMode, setSortMode] = useState<"score" | "education_desc" | "education_asc" | "school_desc" | "school_asc">("score");
+  const [sortMode, setSortMode] = useState<CandidateSortOption>("weighted_score");
+  const [schoolNames, setSchoolNames] = useState<Record<number, string | null>>({});
+  const [selectedSchools, setSelectedSchools] = useState<(string | null)[]>([]);
+  const [schoolNamesLoading, setSchoolNamesLoading] = useState(false);
+  const [schoolNamesFailures, setSchoolNamesFailures] = useState(0);
+  const [schoolLookupRevision, setSchoolLookupRevision] = useState(0);
   const [weightDraft, setWeightDraft] = useState<WeightPercentages | null>(null);
   const [weightSaving, setWeightSaving] = useState(false);
   const [weightMessage, setWeightMessage] = useState<string | null>(null);
@@ -361,6 +373,10 @@ export default function RecruiterPage() {
       };
     }));
   }, []);
+
+  useEffect(() => {
+    void loadStudents();
+  }, [loadStudents]);
 
   const loadQuestionBank = useCallback(async (jid: number) => {
     setBankLoading(true);
@@ -557,13 +573,62 @@ export default function RecruiterPage() {
   }, [list, selectedUserId]);
 
   const visibleCandidates = useMemo(() => {
-    const candidates = list?.candidates ?? [];
-    if (sortMode === "score") return candidates;
-    if (sortMode === "school_desc" || sortMode === "school_asc") {
-      return sortCandidatesBySchoolTier(candidates, sortMode === "school_desc" ? "desc" : "asc");
+    const candidates = filterCandidatesBySchoolNames(list?.candidates ?? [], schoolNames, selectedSchools);
+    if (sortMode === "education_level") {
+      return sortCandidatesByEducation(candidates, "desc");
     }
-    return sortCandidatesByEducation(candidates, sortMode === "education_desc" ? "desc" : "asc");
-  }, [list, sortMode]);
+    if (sortMode === "overall_score") {
+      return sortCandidatesByOverall(candidates);
+    }
+    return candidates;
+  }, [list, sortMode, schoolNames, selectedSchools]);
+
+  const schoolOptions = useMemo(() => schoolNameOptions(list?.candidates ?? [], schoolNames), [list, schoolNames]);
+
+  useEffect(() => {
+    if (selectedSchools.length === 0 || schoolNamesLoading) return;
+    if (visibleCandidates.some((candidate) => candidate.user_id === selectedUserId)) return;
+    const nextId = visibleCandidates[0]?.user_id ?? null;
+    setSelectedUserId(nextId);
+    setProfileId(nextId);
+  }, [visibleCandidates, selectedSchools.length, schoolNamesLoading, selectedUserId]);
+
+  useEffect(() => { setSelectedSchools([]); }, [jobId, selectedCohortKey, profileRevision]);
+
+  useEffect(() => {
+    const ids = Array.from(new Set((list?.candidates ?? []).map((candidate) => candidate.user_id)));
+    const controller = new AbortController();
+    let cancelled = false;
+    let cursor = 0;
+    let failures = 0;
+    const names: Record<number, string | null> = {};
+    setSchoolNamesLoading(ids.length > 0);
+    setSchoolNamesFailures(0);
+    async function worker() {
+      while (!cancelled && cursor < ids.length) {
+        const id = ids[cursor++];
+        names[id] = null;
+        try {
+          const response = await fetch(`/api/recruiter/students/${id}/resume/text`, { signal: controller.signal });
+          if (response.status === 404 || response.status === 415) continue;
+          if (!response.ok) throw new Error("读取学校名称失败");
+          const raw: unknown = await response.json();
+          if (!isRecord(raw) || raw.student_id !== id || !Array.isArray(raw.paragraphs) || raw.paragraphs.some((line) => typeof line !== "string")) throw new Error("简历内容响应非法");
+          names[id] = extractResumeDetails(raw.paragraphs as string[]).find((detail) => detail.label === "毕业院校")?.value ?? null;
+        } catch {
+          if (!cancelled) failures += 1;
+        }
+      }
+    }
+    void Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker)).then(() => {
+      if (!cancelled) {
+        setSchoolNames(names);
+        setSchoolNamesFailures(failures);
+        setSchoolNamesLoading(false);
+      }
+    });
+    return () => { cancelled = true; controller.abort(); };
+  }, [list, profileRevision, schoolLookupRevision]);
 
   const savedWeightPercentages = parseWeightPercentages(discover?.weights ?? null);
   const weightDraftIsDirty = weightDraft !== null && savedWeightPercentages !== null
@@ -902,17 +967,34 @@ export default function RecruiterPage() {
       <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(230px,0.75fr)_minmax(0,1.65fr)] xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.8fr)_minmax(260px,0.8fr)]">
         <section className="min-w-0 rounded-2xl border border-[#2f6fed]/60 bg-[#0c1730]/90 p-4 shadow-[0_0_24px_rgba(47,111,237,0.2)]">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-lg text-white">候选列表</h2>
-            <label className="flex w-full flex-col items-start gap-2 text-sm text-[#9fb4d4]">
-              排序
-              <select className="w-full min-w-0 rounded-xl border border-[#2f6fed] bg-[#050912] px-3 py-2 text-white" value={sortMode} onChange={(e) => setSortMode(e.target.value as typeof sortMode)}>
-                <option value="score">岗位加权分</option>
-                <option value="school_desc">学校档次：高到低</option>
-                <option value="school_asc">学校档次：低到高</option>
-                <option value="education_desc">学历：高到低</option>
-                <option value="education_asc">学历：低到高</option>
-              </select>
-            </label>
+            <h2 className="text-lg font-semibold text-white">候选列表</h2>
+            <div className="flex w-full flex-col gap-2">
+              <span className="text-sm font-medium text-[#9fb4d4]">排序选项</span>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                {SORT_OPTIONS.map((opt) => {
+                  const isActive = sortMode === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setSortMode(opt.id)}
+                      className={`flex flex-col items-center justify-center rounded-xl border px-2.5 py-2 text-center transition ${
+                        isActive
+                          ? "border-[#ff8a2a] bg-[#2a1608] text-white shadow-[0_0_12px_rgba(255,138,42,0.35)]"
+                          : "border-[#2f6fed]/40 bg-[#050912] text-[#9fb4d4] hover:border-[#7eb6ff] hover:text-white"
+                      }`}
+                    >
+                      <span className={`text-xs font-semibold ${isActive ? "text-[#ff8a2a]" : "text-white"}`}>
+                        {opt.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-[#7eb6ff]">
+                {SORT_OPTIONS.find((opt) => opt.id === sortMode)?.desc}
+              </p>
+            </div>
             <label className="flex w-full flex-col items-start gap-2 text-sm text-[#9fb4d4]">
               评分口径
               <select
@@ -933,6 +1015,19 @@ export default function RecruiterPage() {
           <p className="mb-3 text-xs text-[#7eb6ff]">
             企业加权（岗位 dims_json）· eligibility={discover?.eligibility ?? "—"}
           </p>
+          <fieldset className="mb-4 rounded-xl border border-[#2f6fed]/40 bg-[#050912] p-3" disabled={schoolNamesLoading}>
+            <legend className="px-1 text-sm font-medium text-white">学校名称 · 勾选筛选</legend>
+            <p className="text-xs leading-5 text-[#9fb4d4]">支持多选，未勾选时显示全部学校。</p>
+            {schoolNamesLoading ? <p className="mt-3 text-xs text-[#9fb4d4]" role="status">正在读取简历中的学校名称…</p> : schoolOptions.length ? <div className="mt-3 max-h-60 space-y-2 overflow-y-auto">
+              {schoolOptions.map(({ name, count }) => <label key={JSON.stringify(name)} className="flex cursor-pointer items-start gap-2 rounded-lg px-1 py-1 text-sm text-white">
+                <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-[#2f6fed]" checked={selectedSchools.includes(name)} onChange={(event) => setSelectedSchools((current) => event.target.checked ? [...current, name] : current.filter((school) => school !== name))} />
+                <span className="min-w-0 break-words">{name ?? "未读取到学校名称"}<span className="ml-1 text-xs text-[#9fb4d4]">（{count} 人）</span></span>
+              </label>)}
+            </div> : <p className="mt-3 text-xs text-[#9fb4d4]">有候选人后显示可选学校。</p>}
+            {selectedSchools.length > 0 && <button type="button" className="mt-3 text-xs text-[#7eb6ff] underline" onClick={() => setSelectedSchools([])}>清除学校筛选</button>}
+            {schoolNamesFailures > 0 && <p className="mt-3 text-xs leading-5 text-[#ffd0a8]">{schoolNamesFailures} 份简历读取失败。<button type="button" className="ml-1 underline" onClick={() => setSchoolLookupRevision((value) => value + 1)}>重新读取</button></p>}
+            {!schoolNamesLoading && (list?.candidates.length ?? 0) > 0 && <p className="mt-3 text-xs text-[#9fb4d4]" role="status">当前显示 {visibleCandidates.length} / {list?.candidates.length} 人</p>}
+          </fieldset>
           <details className="mb-4 rounded-xl border border-[#2f6fed]/40 bg-[#050912] p-4">
             <summary className="cursor-pointer text-sm font-medium text-white">人才需求权重 · 展开调整</summary>
             <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
@@ -991,6 +1086,8 @@ export default function RecruiterPage() {
             <p className="rounded-xl border border-[#2f6fed]/40 bg-[#050912] px-4 py-6 text-sm text-[#9fb4d4]">
               {emptyHint}
             </p>
+          ) : visibleCandidates.length === 0 ? (
+            <p className="rounded-xl border border-[#2f6fed]/40 bg-[#050912] px-4 py-6 text-sm text-[#9fb4d4]">当前学校筛选下没有候选人，可以清除筛选查看全部。</p>
           ) : (
             <ul className="space-y-3">
               {visibleCandidates.map((c) => (
@@ -1004,36 +1101,43 @@ export default function RecruiterPage() {
                         : "border-[#2f6fed]/50 bg-[#050912]"
                     }`}
                   >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-white">{c.name_masked ?? `学生#${c.user_id}`}</p>
-                        <p className="text-xs text-[#9fb4d4]">
-                          {c.major ?? "专业未填"} · {c.grade ?? "年级未填"} · {c.education_level ?? "学历未填"} · {c.school_tier ?? "学校档次未填"} · sid={c.session_id}
-                        </p>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#2f6fed]/60 bg-[#0c1730] text-xs font-semibold text-[#7eb6ff] shadow-inner">
+                        {c.name_masked ? c.name_masked.slice(-2) : "头像"}
                       </div>
-                      <div className="text-right text-sm">
-                        <p className="text-[#ffb067]">
-                          加权 {formatScore(c.weighted_score)}
-                        </p>
-                        <p className="text-xs text-[#9fb4d4]">
-                          等权 overall {formatScore(c.overall)}
-                        </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="font-medium text-white">{c.name_masked ?? `学生#${c.user_id}`}</p>
+                            <p className="text-xs text-[#9fb4d4]">
+                              {c.major ?? "专业未填"} · {c.grade ?? "年级未填"} · {c.education_level ?? "学历未填"} · {schoolNames[c.user_id] ?? (schoolNamesLoading ? "学校读取中…" : "学校名称未读取到")} · sid={c.session_id}
+                            </p>
+                          </div>
+                          <div className="text-right text-sm">
+                            <p className="text-[#ffb067]">
+                              加权 {formatScore(c.weighted_score)}
+                            </p>
+                            <p className="text-xs text-[#9fb4d4]">
+                              等权 overall {formatScore(c.overall)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[#9fb4d4]">
+                          {REQUIRED_DIMENSIONS.map((k) => (
+                            <span key={k} className="rounded-full border border-[#2f6fed]/40 px-2 py-0.5">
+                              {DIMENSION_LABEL_MAP[k]} {formatScore(c.dimensions[k].score)}
+                            </span>
+                          ))}
+                        </div>
+                        <Link
+                          href={c.report_path}
+                          className="mt-2 inline-block text-xs text-[#7eb6ff] underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          查看原报告
+                        </Link>
                       </div>
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[#9fb4d4]">
-                      {REQUIRED_DIMENSIONS.map((k) => (
-                        <span key={k} className="rounded-full border border-[#2f6fed]/40 px-2 py-0.5">
-                          {DIMENSION_LABEL_MAP[k]} {formatScore(c.dimensions[k].score)}
-                        </span>
-                      ))}
-                    </div>
-                    <Link
-                      href={c.report_path}
-                      className="mt-2 inline-block text-xs text-[#7eb6ff] underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      查看原报告
-                    </Link>
                   </button>
                 </li>
               ))}
@@ -1055,8 +1159,21 @@ export default function RecruiterPage() {
             <>
               <div className="flex flex-col-reverse justify-between gap-5 sm:flex-row">
                 <div className="min-w-0 flex-1">
-                  <h3 className="text-2xl font-semibold text-white">{profile.name_masked ?? "未填写姓名"}</h3>
-                  <p className="mt-2 text-sm text-[#9fb4d4]">学生编号 {profile.student_no ?? `#${profile.id}`}</p>
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#2f6fed] bg-[#050912] shadow-[0_0_14px_rgba(47,111,237,0.35)]">
+                      {resumeImages[0] ? (
+                        <img src={resumeImages[0]} alt="候选人头像" className="h-full w-full object-cover object-top" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-[#1a2d5a] to-[#0c1730] text-base font-bold text-[#7eb6ff]">
+                          {profile.name_masked ? profile.name_masked.slice(-2) : "头像"}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-2xl font-semibold text-white">{profile.name_masked ?? "未填写姓名"}</h3>
+                      <p className="mt-1 text-sm text-[#9fb4d4]">学生编号 {profile.student_no ?? `#${profile.id}`}</p>
+                    </div>
+                  </div>
                   <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-4 text-sm">
                     {[{ label: "专业", value: profile.major }, { label: "年级", value: profile.grade }, { label: "学历", value: profile.education_level }, { label: "学校名称", value: resumeDetails.find((detail) => detail.label === "毕业院校")?.value ?? "未注明" }, { label: "籍贯", value: resumeDetails.find((detail) => detail.label === "籍贯")?.value ?? "未注明" }, { label: "现居 / 住址", value: resumeDetails.find((detail) => detail.label === "现居 / 住址")?.value ?? "未注明" }, ...resumeDetails.filter((detail) => detail.label === "年龄")].map(({ label, value }) => (
                       <div key={label}><dt className="text-xs text-[#9fb4d4]">{label}</dt><dd className="mt-1 break-words font-medium text-white">{value ?? "未填写"}</dd></div>
@@ -1064,8 +1181,34 @@ export default function RecruiterPage() {
                   </dl>
                 </div>
                 <figure className="w-40 shrink-0 sm:w-44">
-                  {resumeImages[0] ? <img src={resumeImages[0]} alt="简历原件中的照片或图片" className="h-52 w-40 rounded-xl border border-[#2f6fed]/40 bg-[#050912] object-contain sm:h-56 sm:w-44" /> : <div className="flex h-52 w-40 items-center justify-center rounded-xl border border-dashed border-[#2f6fed]/40 bg-[#050912] px-4 text-center text-sm leading-6 text-[#9fb4d4] sm:h-56 sm:w-44">{resumeTextLoading ? "正在读取照片…" : profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "照片见下方 PDF 原件" : "简历未提供可显示的照片"}</div>}
-                  <figcaption className="mt-2 text-center text-xs text-[#9fb4d4]">简历照片 / 原件图片</figcaption>
+                  {resumeImages[0] ? (
+                    <div className="group relative overflow-hidden rounded-xl border-2 border-[#2f6fed]/70 bg-[#050912] shadow-[0_0_20px_rgba(47,111,237,0.3)]">
+                      <img
+                        src={resumeImages[0]}
+                        alt="简历原件证件照片"
+                        className="h-52 w-40 object-cover object-top transition duration-300 group-hover:scale-105 sm:h-56 sm:w-44"
+                      />
+                      <span className="absolute bottom-2 right-2 rounded-md bg-[#050912]/80 px-1.5 py-0.5 text-[10px] text-[#7eb6ff] backdrop-blur-sm">
+                        简历照片
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex h-52 w-40 flex-col items-center justify-center rounded-xl border border-dashed border-[#2f6fed]/40 bg-[#050912] p-4 text-center sm:h-56 sm:w-44">
+                      <svg className="h-16 w-16 text-[#7eb6ff]/50" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                      </svg>
+                      <span className="mt-2 text-xs leading-5 text-[#9fb4d4]">
+                        {resumeTextLoading
+                          ? "正在读取照片…"
+                          : profile.resume_filename?.toLowerCase().endsWith(".pdf")
+                          ? "照片见下方 PDF 原件"
+                          : "简历未提供可显示的照片"}
+                      </span>
+                    </div>
+                  )}
+                  <figcaption className="mt-2 text-center text-xs font-medium text-[#7eb6ff]">
+                    简历照片 / 证件照
+                  </figcaption>
                 </figure>
               </div>
               {(profile.internship_experience || profile.awards) && <dl className="mt-6 space-y-4 border-t border-[#2f6fed]/30 pt-5 text-sm">
