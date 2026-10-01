@@ -1058,13 +1058,13 @@ export default function RecruiterPage() {
                   <h3 className="text-2xl font-semibold text-white">{profile.name_masked ?? "未填写姓名"}</h3>
                   <p className="mt-2 text-sm text-[#9fb4d4]">学生编号 {profile.student_no ?? `#${profile.id}`}</p>
                   <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-4 text-sm">
-                    {[{ label: "专业", value: profile.major }, { label: "年级", value: profile.grade }, { label: "学历", value: profile.education_level }, { label: "学校档次", value: profile.school_tier }, ...resumeDetails].map(({ label, value }) => (
+                    {[{ label: "专业", value: profile.major }, { label: "年级", value: profile.grade }, { label: "学历", value: profile.education_level }, { label: "学校名称", value: resumeDetails.find((detail) => detail.label === "毕业院校")?.value ?? "未注明" }, { label: "籍贯", value: resumeDetails.find((detail) => detail.label === "籍贯")?.value ?? "未注明" }, { label: "现居 / 住址", value: resumeDetails.find((detail) => detail.label === "现居 / 住址")?.value ?? "未注明" }, ...resumeDetails.filter((detail) => detail.label === "年龄")].map(({ label, value }) => (
                       <div key={label}><dt className="text-xs text-[#9fb4d4]">{label}</dt><dd className="mt-1 break-words font-medium text-white">{value ?? "未填写"}</dd></div>
                     ))}
                   </dl>
                 </div>
-                <figure className="w-28 shrink-0">
-                  {resumeImages[0] ? <img src={resumeImages[0]} alt="简历原件中的照片或图片" className="h-36 w-28 rounded-xl border border-[#2f6fed]/40 bg-[#050912] object-contain" /> : <div className="flex h-36 w-28 items-center justify-center rounded-xl border border-dashed border-[#2f6fed]/40 bg-[#050912] px-3 text-center text-xs leading-6 text-[#9fb4d4]">{resumeTextLoading ? "正在读取照片…" : profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "照片见下方 PDF 原件" : "简历未提供可显示的照片"}</div>}
+                <figure className="w-40 shrink-0 sm:w-44">
+                  {resumeImages[0] ? <img src={resumeImages[0]} alt="简历原件中的照片或图片" className="h-52 w-40 rounded-xl border border-[#2f6fed]/40 bg-[#050912] object-contain sm:h-56 sm:w-44" /> : <div className="flex h-52 w-40 items-center justify-center rounded-xl border border-dashed border-[#2f6fed]/40 bg-[#050912] px-4 text-center text-sm leading-6 text-[#9fb4d4] sm:h-56 sm:w-44">{resumeTextLoading ? "正在读取照片…" : profile.resume_filename?.toLowerCase().endsWith(".pdf") ? "照片见下方 PDF 原件" : "简历未提供可显示的照片"}</div>}
                   <figcaption className="mt-2 text-center text-xs text-[#9fb4d4]">简历照片 / 原件图片</figcaption>
                 </figure>
               </div>

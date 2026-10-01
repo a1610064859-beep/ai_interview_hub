@@ -31,16 +31,32 @@ export function extractResumeRequirements(paragraphs: string[]) {
 }
 
 export function extractResumeDetails(paragraphs: string[]) {
+  const addressLabels = "现居住地|现居地址|现住址|家庭住址|居住地址|联系地址|通讯地址|现居地|居住地|现居|住址|地址";
+  const schoolLabels = "毕业院校|毕业学校|就读院校|学校名称|学校名|院校名称|学校|院校";
+  const detailLabels = `年龄|籍贯|祖籍|${addressLabels}|${schoolLabels}`;
+  const bareLabel = new RegExp(`^(?:${detailLabels})[：:]?$`);
+  const nextLabel = new RegExp(`\\s+(?:${detailLabels})\\s*[：:]`);
+  const lines = paragraphs.flatMap((paragraph) => paragraph.split(/\r?\n/)).map((line) => line.trim()).filter(Boolean);
+  const readable = lines.map((line, index) => {
+    const next = lines[index + 1];
+    if (bareLabel.test(line) && next && !bareLabel.test(next) && !OTHER_SECTION.test(next) && !/^[^：:]{2,12}[：:]/.test(next)) {
+      return `${line.replace(/[：:]$/, "")}：${next}`;
+    }
+    return line;
+  });
   const fields = [
     { label: "年龄", pattern: /(?:^|[\s，,；;])年龄\s*[：:]\s*([^\n，,；;]+)/ },
-    { label: "籍贯", pattern: /(?:^|[\s，,；;])籍贯\s*[：:]\s*([^\n，,；;]+)/ },
-    { label: "现居 / 住址", pattern: /(?:^|[\s，,；;])(?:现居(?:地)?|住址|居住地)\s*[：:]\s*([^\n，,；;]+)/ },
-    { label: "毕业院校", pattern: /(?:^|[\s，,；;])(?:毕业院校|毕业学校|就读院校|学校名称)\s*[：:]\s*([^\n，,；;]+)/ },
+    { label: "籍贯", pattern: /(?:^|[\s，,；;|])(?:籍贯|祖籍)\s*[：:]\s*([^\n，,；;|\t]+)/ },
+    { label: "现居 / 住址", pattern: new RegExp(`(?:^|[\\s，,；;|])(?:${addressLabels})\\s*[：:]\\s*([^\\n，,；;|\\t]+)`) },
+    { label: "毕业院校", pattern: new RegExp(`(?:^|[\\s，,；;|])(?:${schoolLabels})\\s*[：:]\\s*([^\\n，,；;|\\t]+)`) },
   ];
   return fields.flatMap(({ label, pattern }) => {
-    for (const paragraph of paragraphs) {
+    for (const paragraph of readable) {
       const match = paragraph.match(pattern);
-      if (match) return [{ label, value: match[1].trim() }];
+      if (match) {
+        const value = match[1].split(nextLabel)[0].trim();
+        if (value) return [{ label, value }];
+      }
     }
     return [];
   });

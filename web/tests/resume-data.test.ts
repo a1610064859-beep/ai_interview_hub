@@ -22,3 +22,26 @@ test("简历未注明的信息不推断，个人资料仅取有标签的原文",
     { label: "年龄", value: "22岁" }, { label: "籍贯", value: "上海" }, { label: "毕业院校", value: "上海某职业院校" },
   ]);
 });
+
+test("住址支持常见简历标签，并分开读取同一行的籍贯与住址", () => {
+  for (const label of ["住址", "现住址", "家庭住址", "现居住地", "居住地址", "联系地址", "通讯地址", "地址"]) {
+    assert.deepEqual(extractResumeDetails([`${label}：上海市浦东新区`]), [{ label: "现居 / 住址", value: "上海市浦东新区" }]);
+  }
+  assert.deepEqual(extractResumeDetails(["籍贯：江苏省南京市 现住址：上海市浦东新区"]), [
+    { label: "籍贯", value: "江苏省南京市" }, { label: "现居 / 住址", value: "上海市浦东新区" },
+  ]);
+});
+
+test("籍贯和住址支持表格中分开的标签与值，不把项目地点当成住址", () => {
+  assert.deepEqual(extractResumeDetails(["籍贯：", "江苏省南京市", "住址", "上海市浦东新区"]), [
+    { label: "籍贯", value: "江苏省南京市" }, { label: "现居 / 住址", value: "上海市浦东新区" },
+  ]);
+  assert.deepEqual(extractResumeDetails(["项目地点：上海", "户籍所在地：江苏", "籍贯：", "教育经历"]), []);
+});
+
+test("学校名称读取实际院校名，不把学校档次当成学校名称", () => {
+  for (const label of ["学校名", "学校名称", "学校", "院校", "院校名称", "毕业院校", "毕业学校", "就读院校"]) {
+    assert.deepEqual(extractResumeDetails([`${label}：上海某职业院校`]), [{ label: "毕业院校", value: "上海某职业院校" }]);
+  }
+  assert.deepEqual(extractResumeDetails(["学校档次：211/双一流"]), []);
+});
