@@ -25,3 +25,26 @@ memory/*.md
 !memory/TESTING.md
 
 /命题*.pdf
+
+# 模型与运行时缓存（FunASR Paraformer权重约950MB，禁止上传避免GitHub超限）
+models/
+runtime/
+.build/
+.ppt-improve-work/
+tmp/
+
+# 前端构建与测试缓存
+web/.next*/
+
+# 数据库备份与临时日志
+data/*.bak*
+data/*-shm
+data/*-wal
+logs/
+
+# 根目录临时截图与探针数据
+ppt-*.png
+challenge05-*.png
+ppt_contact.png
+*.inspect.ndjson
+

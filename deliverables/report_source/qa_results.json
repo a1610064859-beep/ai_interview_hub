@@ -1,0 +1,28 @@
+{
+  "page_count": 47,
+  "chapter_count": 12,
+  "chapter_pages": {
+    "第一章 项目背景与需求分析": 5,
+    "第二章 核心技术方案": 10,
+    "第三章 项目创新点": 17,
+    "第四章 项目实现过程": 20,
+    "第五章 测试与系统验证": 23,
+    "第六章 应用场景": 26,
+    "第七章 落地可行性": 29,
+    "第八章 商业化前景与推广路径": 32,
+    "第九章 团队分工": 35,
+    "第十章 参考文献与支撑资料": 37,
+    "附录A AI工具与开源组件清单": 39,
+    "附录B 关键Prompt原文": 42
+  },
+  "blank_pages": [],
+  "characters_outside_page": [],
+  "replacement_glyph_present": false,
+  "blind_review_compliant": true,
+  "forbidden_found": [],
+  "table_count": 14,
+  "figure_count": 6,
+  "pdf_bytes": 2009608,
+  "toc_matches": true,
+  "visual_review": "pending"
+}
